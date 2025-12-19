@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { Calendar, Trash2, Play } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Project } from "@/store/projectStore";
 
 interface ProjectCardProps {
@@ -10,9 +11,10 @@ interface ProjectCardProps {
 }
 
 export default function ProjectCard({ project, onDelete }: ProjectCardProps) {
+    const router = useRouter();
+
     const handleOpen = () => {
-        // 使用 hash 路由
-        window.location.hash = `#/project/${project.id}`;
+        router.push(`/project/${project.id}`);
     };
 
     const handleDelete = (e: React.MouseEvent) => {

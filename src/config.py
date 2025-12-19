@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 
 from .utils import get_logger
 
+# Load environment variables from .env file
+load_dotenv()
 
 logger = get_logger(__name__)
 

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
+import { useRouter } from "next/navigation";
 
 interface CreateProjectDialogProps {
     isOpen: boolean;
@@ -15,6 +16,7 @@ export default function CreateProjectDialog({ isOpen, onClose }: CreateProjectDi
     const [text, setText] = useState("");
     const [isCreating, setIsCreating] = useState(false);
     const createProject = useProjectStore((state) => state.createProject);
+    const router = useRouter();
 
     const handleCreate = async () => {
         if (!title || !text) {
@@ -28,7 +30,7 @@ export default function CreateProjectDialog({ isOpen, onClose }: CreateProjectDi
             // Get the newly created project
             const currentProject = useProjectStore.getState().currentProject;
             if (currentProject) {
-                window.location.hash = `#/project/${currentProject.id}`;
+                router.push(`/project/${currentProject.id}`);
             }
             onClose();
         } catch {
