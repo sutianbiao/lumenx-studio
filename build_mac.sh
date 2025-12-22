@@ -163,8 +163,8 @@ mkdir -p "$TMP_DMG_DIR"
 cp -R "$APP_PATH" "$TMP_DMG_DIR/"
 
 # 复制安装脚本到临时目录
-if [ -f "install.sh" ]; then
-    cp "install.sh" "$TMP_DMG_DIR/"
+if [ -f "运行APP前_先点我安装.sh" ]; then
+    cp "运行APP前_先点我安装.sh" "$TMP_DMG_DIR/"
     chmod +x "$TMP_DMG_DIR/运行APP前_先点我安装.sh"
     echo "   已添加安装脚本到 DMG"
 else
