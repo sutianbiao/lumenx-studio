@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { RefreshCw, Download, Plus } from "lucide-react";
 
-import { api } from "@/lib/api";
+import { api, API_URL } from "@/lib/api";
 import { useProjectStore } from "@/store/projectStore";
 
 interface Asset {
@@ -31,13 +31,13 @@ export default function AssetGrid({ projectId }: AssetGridProps) {
             ...currentProject.characters.map((c: any) => ({
                 id: c.id,
                 type: "char" as const,
-                url: c.image_url ? `http://localhost:8000/files/${c.image_url}` : "",
+                url: c.image_url ? `${API_URL}/files/${c.image_url}` : "",
                 title: c.name
             })),
             ...currentProject.scenes.map((s: any) => ({
                 id: s.id,
                 type: "bg" as const,
-                url: s.image_url ? `http://localhost:8000/files/${s.image_url}` : "",
+                url: s.image_url ? `${API_URL}/files/${s.image_url}` : "",
                 title: s.name
             }))
         ];
@@ -50,13 +50,13 @@ export default function AssetGrid({ projectId }: AssetGridProps) {
                 ...currentProject.characters.map((c: any) => ({
                     id: c.id,
                     type: "char" as const,
-                    url: c.image_url ? `http://localhost:8000/files/${c.image_url}` : "",
+                    url: c.image_url ? `${API_URL}/files/${c.image_url}` : "",
                     title: c.name
                 })),
                 ...currentProject.scenes.map((s: any) => ({
                     id: s.id,
                     type: "bg" as const,
-                    url: s.image_url ? `http://localhost:8000/files/${s.image_url}` : "",
+                    url: s.image_url ? `${API_URL}/files/${s.image_url}` : "",
                     title: s.name
                 }))
             ];
@@ -78,13 +78,13 @@ export default function AssetGrid({ projectId }: AssetGridProps) {
                 ...project.characters.map((c: any) => ({
                     id: c.id,
                     type: "char" as const,
-                    url: c.image_url ? `http://localhost:8000/files/${c.image_url}` : "",
+                    url: c.image_url ? `${API_URL}/files/${c.image_url}` : "",
                     title: c.name
                 })),
                 ...project.scenes.map((s: any) => ({
                     id: s.id,
                     type: "bg" as const,
-                    url: s.image_url ? `http://localhost:8000/files/${s.image_url}` : "",
+                    url: s.image_url ? `${API_URL}/files/${s.image_url}` : "",
                     title: s.name
                 }))
             ];

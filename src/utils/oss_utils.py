@@ -1,120 +1,279 @@
 import os
 import oss2
 import hashlib
-from typing import Optional
+import time
+from typing import Optional, Tuple
 from . import get_logger
 
 logger = get_logger(__name__)
 
+# Default configuration
+DEFAULT_OSS_BASE_PATH = "lumenx"
+SIGN_URL_EXPIRES_DISPLAY = 7200  # 2 hours for frontend display
+SIGN_URL_EXPIRES_API = 1800      # 30 minutes for AI API calls
+
+
+def is_oss_configured() -> bool:
+    """Check if OSS is properly configured."""
+    required = [
+        os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID"),
+        os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET"),
+        os.getenv("OSS_ENDPOINT"),
+        os.getenv("OSS_BUCKET_NAME")
+    ]
+    return all(required)
+
+
+def get_oss_base_path() -> str:
+    """Get OSS base path from environment or use default."""
+    return os.getenv("OSS_BASE_PATH", DEFAULT_OSS_BASE_PATH).rstrip("/")
+
+
+def is_object_key(value: str) -> bool:
+    """
+    Check if a string value is an OSS Object Key (not a full URL or local path).
+    Object Keys don't start with http:// or https:// and contain path separators.
+    """
+    if not value or not isinstance(value, str):
+        return False
+    # Skip full URLs
+    if value.startswith("http://") or value.startswith("https://"):
+        return False
+    # Skip empty or whitespace-only
+    if not value.strip():
+        return False
+    # Object keys typically have path structure
+    return "/" in value or value.endswith((".png", ".jpg", ".jpeg", ".mp4", ".mp3", ".wav"))
+
+
+def is_local_path(value: str) -> bool:
+    """Check if a string is a local file path (relative or absolute)."""
+    if not value or not isinstance(value, str):
+        return False
+    if value.startswith("http://") or value.startswith("https://"):
+        return False
+    # Check if it's a relative path starting with known directories
+    return value.startswith(("assets/", "storyboard/", "video/", "audio/", "export/", "uploads/", "output/"))
+
+
 class OSSImageUploader:
-    def __init__(self, access_key_id: str = None, access_key_secret: str = None, endpoint: str = None, bucket_name: str = None, oss_prefix: str = 'comic-gen-assets/'):
-        """
-        Initialize OSS Uploader.
-        Defaults to environment variables if arguments are not provided.
-        """
-        self.access_key_id = access_key_id or os.getenv("OSS_ACCESS_KEY_ID")
-        self.access_key_secret = access_key_secret or os.getenv("OSS_ACCESS_KEY_SECRET")
-        self.endpoint = endpoint or os.getenv("OSS_ENDPOINT")
-        self.bucket_name = bucket_name or os.getenv("OSS_BUCKET_NAME")
-        self.oss_prefix = oss_prefix or os.getenv("OSS_PREFIX", 'comic-gen-assets/')
+    """
+    OSS Uploader supporting Private OSS + Dynamic Signing strategy.
+    
+    Key principles:
+    - Upload files and return Object Keys (not full URLs)
+    - Generate signed URLs on-demand with configurable expiry
+    - Support both private bucket access and AI API access
+    """
+    
+    _instance = None
+    
+    def __new__(cls):
+        """Singleton pattern to reuse OSS connection."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+            
+        self.access_key_id = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID")
+        self.access_key_secret = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
+        self.endpoint = os.getenv("OSS_ENDPOINT")
+        self.bucket_name = os.getenv("OSS_BUCKET_NAME")
+        self.base_path = get_oss_base_path()
         
         if not all([self.access_key_id, self.access_key_secret, self.endpoint, self.bucket_name]):
-            logger.warning("OSS credentials not fully configured. OSS upload will fail.")
+            logger.warning("OSS credentials not fully configured. OSS upload will be disabled.")
             self.bucket = None
         else:
             try:
                 self.auth = oss2.Auth(self.access_key_id, self.access_key_secret)
                 self.bucket = oss2.Bucket(self.auth, self.endpoint, self.bucket_name)
+                logger.info(f"OSS initialized: bucket={self.bucket_name}, base_path={self.base_path}")
             except Exception as e:
                 logger.error(f"Failed to initialize OSS bucket: {e}")
                 self.bucket = None
-
-        self.uploaded_images = {}  # Cache uploaded images
-
-    def get_file_md5(self, file_path: str) -> str:
-        """Calculate file MD5."""
-        md5_hash = hashlib.md5()
-        with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                md5_hash.update(chunk)
-        return md5_hash.hexdigest()
-
-    def get_oss_url(self, object_name: str, use_public_url: bool = True) -> str:
+        
+        self._initialized = True
+    
+    @classmethod
+    def reset_instance(cls):
+        """Reset singleton instance (useful when credentials change)."""
+        cls._instance = None
+    
+    @property
+    def is_configured(self) -> bool:
+        """Check if OSS is properly configured and ready."""
+        return self.bucket is not None
+    
+    def _build_object_key(self, sub_path: str, filename: str) -> str:
         """
-        Get OSS URL.
+        Build full Object Key from base path, sub path, and filename.
+        
+        Example: lumenx/proj_123/assets/characters/char_001.png
+        """
+        parts = [self.base_path]
+        if sub_path:
+            parts.append(sub_path.strip("/"))
+        parts.append(filename)
+        return "/".join(parts)
+    
+    def upload_file(self, local_path: str, sub_path: str = "", custom_filename: str = None) -> Optional[str]:
+        """
+        Upload a file to OSS and return the Object Key.
         
         Args:
-            object_name: The object key in OSS
-            use_public_url: If True, return public URL (for Dashscope API access).
-                           If False, return signed URL (for private buckets).
+            local_path: Local file path to upload
+            sub_path: Sub-directory path (e.g., "proj_123/assets/characters")
+            custom_filename: Optional custom filename, defaults to original filename
         
-        Note: For Dashscope API to access reference images, the URL must be publicly 
-        accessible. Set use_public_url=True and ensure OSS bucket has public read access.
+        Returns:
+            Object Key (e.g., "lumenx/proj_123/assets/characters/file.png") or None if failed
         """
         if not self.bucket:
-             return ""
+            logger.warning("OSS not configured, cannot upload file.")
+            return None
         
-        if use_public_url:
-            # Generate public URL (requires bucket to have public read access)
-            # Format: https://{bucket}.{endpoint}/{object_name}
-            # Remove 'https://' or 'http://' from endpoint if present
-            endpoint_clean = self.endpoint.replace('https://', '').replace('http://', '')
-            public_url = f"https://{self.bucket_name}.{endpoint_clean}/{object_name}"
-            print(f"DEBUG: Generated PUBLIC OSS URL: {public_url}")
-            return public_url
-        else:
-            # Generate signed URL for private buckets (valid for 1 hour)
-            url = self.bucket.sign_url('GET', object_name, 3600)
-            print(f"DEBUG: Generated SIGNED OSS URL: {url}")
-            return url
-
-    def upload_image(self, local_image_path: str) -> Optional[str]:
-        """
-        Upload a single image to OSS.
-        Returns the OSS URL or None if failed.
-        """
-        if not self.bucket:
-            logger.error("OSS bucket not initialized.")
+        if not os.path.exists(local_path):
+            logger.error(f"File not found: {local_path}")
             return None
-
-        if not os.path.exists(local_image_path):
-            logger.error(f"Image not found: {local_image_path}")
-            return None
-
-        # Return cached URL if available
-        if local_image_path in self.uploaded_images:
-            return self.uploaded_images[local_image_path]
-
+        
         try:
-            filename = os.path.basename(local_image_path)
-            object_name = f"{self.oss_prefix}{filename}"
-
-            # Check if file exists in OSS (optional optimization, skipping for speed unless needed)
-            # For now, we overwrite or assume unique names based on UUIDs usually used in this project
+            filename = custom_filename or os.path.basename(local_path)
+            object_key = self._build_object_key(sub_path, filename)
             
-            logger.info(f"Uploading to OSS: {local_image_path} -> {object_name}")
+            logger.info(f"Uploading to OSS: {local_path} -> {object_key}")
             
-            # Use put_object with explicit file handling instead of put_object_from_file
-            # to avoid potential file descriptor issues
-            with open(local_image_path, 'rb') as fileobj:
-                result = self.bucket.put_object(object_name, fileobj)
-
+            with open(local_path, 'rb') as f:
+                result = self.bucket.put_object(object_key, f)
+            
             if result.status == 200:
-                oss_url = self.get_oss_url(object_name)
-                self.uploaded_images[local_image_path] = oss_url
-                logger.info(f"Upload success: {oss_url}")
-                return oss_url
+                logger.info(f"Upload success: {object_key}")
+                return object_key
             else:
                 logger.error(f"Upload failed with status: {result.status}")
                 return None
-
+                
         except Exception as e:
             logger.error(f"OSS upload error: {e}")
             return None
+    
+    def generate_signed_url(self, object_key: str, expires: int = SIGN_URL_EXPIRES_DISPLAY) -> str:
+        """
+        Generate a signed URL for accessing a private OSS object.
+        
+        Args:
+            object_key: The Object Key in OSS
+            expires: URL validity in seconds (default 2 hours)
+        
+        Returns:
+            Signed URL string
+        """
+        if not self.bucket:
+            logger.warning("OSS not configured, cannot generate signed URL.")
+            return ""
+        
+        try:
+            url = self.bucket.sign_url('GET', object_key, expires)
+            return url
+        except Exception as e:
+            logger.error(f"Failed to generate signed URL for {object_key}: {e}")
+            return ""
+    
+    def sign_url_for_display(self, object_key: str) -> str:
+        """Generate signed URL for frontend display (2 hours validity)."""
+        return self.generate_signed_url(object_key, SIGN_URL_EXPIRES_DISPLAY)
+    
+    def sign_url_for_api(self, object_key: str) -> str:
+        """Generate signed URL for AI API calls (30 minutes validity)."""
+        return self.generate_signed_url(object_key, SIGN_URL_EXPIRES_API)
+    
+    def object_exists(self, object_key: str) -> bool:
+        """Check if an object exists in OSS."""
+        if not self.bucket:
+            return False
+        try:
+            return self.bucket.object_exists(object_key)
+        except:
+            return False
+    
+    # Legacy methods for backward compatibility
+    def upload_image(self, local_image_path: str, sub_path: str = "assets") -> Optional[str]:
+        """Legacy method: Upload image and return Object Key."""
+        return self.upload_file(local_image_path, sub_path)
+    
+    def upload_video(self, local_video_path: str, sub_path: str = "video") -> Optional[str]:
+        """Legacy method: Upload video and return Object Key."""
+        return self.upload_file(local_video_path, sub_path)
+    
+    def get_oss_url(self, object_key: str, use_public_url: bool = False) -> str:
+        """
+        Legacy method: Get OSS URL.
+        
+        Note: For Private OSS strategy, always use signed URLs.
+        The use_public_url parameter is deprecated.
+        """
+        if use_public_url:
+            logger.warning("Public URLs are deprecated. Using signed URL instead for security.")
+        return self.sign_url_for_display(object_key)
 
-    def upload_video(self, local_video_path: str) -> Optional[str]:
-        """
-        Upload a video to OSS.
-        Wrapper around upload_image since the logic is identical.
-        """
-        return self.upload_image(local_video_path)
+
+def sign_oss_urls_in_data(data, uploader: OSSImageUploader = None):
+    """
+    Recursively traverse data structure and convert Object Keys to signed URLs.
+    
+    This is the core function for the "Dynamic Signing" strategy.
+    Called before returning API responses to frontend.
+    
+    Args:
+        data: Dict, list, or primitive value to process
+        uploader: OSSImageUploader instance (created if not provided)
+    
+    Returns:
+        Processed data with Object Keys converted to signed URLs
+    """
+    if uploader is None:
+        uploader = OSSImageUploader()
+    
+    if not uploader.is_configured:
+        # OSS not configured, return data as-is (local mode)
+        return data
+    
+    def process_value(value):
+        if isinstance(value, str):
+            if is_object_key(value):
+                signed_url = uploader.sign_url_for_display(value)
+                return signed_url if signed_url else value
+            return value
+        elif isinstance(value, dict):
+            return {k: process_value(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [process_value(item) for item in value]
+        else:
+            return value
+    
+    return process_value(data)
+
+
+def convert_local_path_to_object_key(local_path: str, project_id: str = None) -> str:
+    """
+    Convert a local relative path to an OSS Object Key format.
+    
+    Example: 
+        "assets/characters/char_001.png" -> "lumenx/proj_123/assets/characters/char_001.png"
+    """
+    base_path = get_oss_base_path()
+    
+    # Remove "output/" prefix if present
+    if local_path.startswith("output/"):
+        local_path = local_path[7:]
+    
+    # Build Object Key
+    if project_id:
+        return f"{base_path}/{project_id}/{local_path}"
+    else:
+        return f"{base_path}/{local_path}"
+

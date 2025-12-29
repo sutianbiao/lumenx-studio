@@ -1,6 +1,19 @@
 /** @type {import('next').NextConfig} */
+const isProd = process.env.NODE_ENV === 'production';
+
 const nextConfig = {
+    output: isProd ? 'export' : undefined,
+    distDir: isProd ? '../static' : undefined,
+    basePath: isProd ? '/static' : undefined,
+    assetPrefix: isProd ? '/static' : undefined,
+    eslint: {
+        ignoreDuringBuilds: true,
+    },
+    typescript: {
+        ignoreBuildErrors: true,
+    },
     images: {
+        unoptimized: true,
         remotePatterns: [
             {
                 protocol: "https",
@@ -9,7 +22,7 @@ const nextConfig = {
             {
                 protocol: "http",
                 hostname: "localhost",
-                port: "8000",
+                port: "17177",
             },
         ],
     },

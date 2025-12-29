@@ -1,6 +1,29 @@
 import axios from "axios";
 
-export const API_URL = "http://localhost:8000";
+// Dynamic API URL detection:
+// 1. In packaged app (Electron): Frontend is served by backend, use same origin
+// 2. In development (port 3000/3001): Use backend port 17177
+const getApiUrl = (): string => {
+    // If running in browser
+    if (typeof window !== 'undefined') {
+        const { protocol, hostname, port } = window.location;
+
+        // In development mode (port 3000/3001 = Next.js dev server)
+        // Backend is on a different port
+        if (port === '3000' || port === '3001') {
+            return 'http://localhost:17177';
+        }
+
+        // In production/packaged mode: Frontend is served by backend
+        // Use same origin
+        return `${protocol}//${hostname}${port ? ':' + port : ''}`;
+    }
+
+    // SSR fallback
+    return 'http://localhost:17177';
+};
+
+export const API_URL = getApiUrl();
 
 export interface VideoTask {
     id: string;
@@ -112,6 +135,16 @@ export const api = {
             negative_prompt: negativePrompt,
             batch_size: batchSize
         });
+        return res.data;
+    },
+
+    generateAssetVideo: async (scriptId: string, assetType: string, assetId: string, data: { prompt?: string, duration?: number, aspect_ratio?: string }) => {
+        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/${assetType}/${assetId}/generate_video`, data);
+        return res.data;
+    },
+
+    deleteAssetVideo: async (scriptId: string, assetType: string, assetId: string, videoId: string) => {
+        const res = await axios.delete(`${API_URL}/projects/${scriptId}/assets/${assetType}/${assetId}/videos/${videoId}`);
         return res.data;
     },
 
@@ -343,4 +376,102 @@ export const api = {
         const res = await axios.post(`${API_URL}/projects/${scriptId}/generate_video`);
         return res.data;
     },
+
+    getEnvConfig: async () => {
+        const res = await axios.get(`${API_URL}/config/env`);
+        return res.data;
+    },
+
+    saveEnvConfig: async (config: Record<string, string | undefined>) => {
+        const res = await axios.post(`${API_URL}/config/env`, config);
+        return res.data;
+    },
+};
+
+// ============================================
+// CRUD APIs for Assets and Frames
+// ============================================
+
+export const crudApi = {
+    // Character CRUD
+    createCharacter: async (scriptId: string, data: {
+        name: string;
+        description?: string;
+        age?: string;
+        gender?: string;
+        clothing?: string;
+    }) => {
+        const res = await axios.post(`${API_URL}/projects/${scriptId}/characters`, data);
+        return res.data;
+    },
+
+    deleteCharacter: async (scriptId: string, characterId: string) => {
+        const res = await axios.delete(`${API_URL}/projects/${scriptId}/characters/${characterId}`);
+        return res.data;
+    },
+
+    // Scene CRUD
+    createScene: async (scriptId: string, data: {
+        name: string;
+        description?: string;
+        time_of_day?: string;
+        lighting_mood?: string;
+    }) => {
+        const res = await axios.post(`${API_URL}/projects/${scriptId}/scenes`, data);
+        return res.data;
+    },
+
+    deleteScene: async (scriptId: string, sceneId: string) => {
+        const res = await axios.delete(`${API_URL}/projects/${scriptId}/scenes/${sceneId}`);
+        return res.data;
+    },
+
+    // Prop CRUD
+    createProp: async (scriptId: string, data: {
+        name: string;
+        description?: string;
+    }) => {
+        const res = await axios.post(`${API_URL}/projects/${scriptId}/props`, data);
+        return res.data;
+    },
+
+    deleteProp: async (scriptId: string, propId: string) => {
+        const res = await axios.delete(`${API_URL}/projects/${scriptId}/props/${propId}`);
+        return res.data;
+    },
+
+    // Frame CRUD
+    createFrame: async (scriptId: string, data: {
+        scene_id: string;
+        action_description: string;
+        character_ids?: string[];
+        prop_ids?: string[];
+        dialogue?: string;
+        speaker?: string;
+        camera_angle?: string;
+        insert_at?: number;
+    }) => {
+        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames`, data);
+        return res.data;
+    },
+
+    deleteFrame: async (scriptId: string, frameId: string) => {
+        const res = await axios.delete(`${API_URL}/projects/${scriptId}/frames/${frameId}`);
+        return res.data;
+    },
+
+    copyFrame: async (scriptId: string, frameId: string, insertAt?: number) => {
+        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames/copy`, {
+            frame_id: frameId,
+            insert_at: insertAt
+        });
+        return res.data;
+    },
+
+    reorderFrames: async (scriptId: string, frameIds: string[]) => {
+        const res = await axios.put(`${API_URL}/projects/${scriptId}/frames/reorder`, {
+            frame_ids: frameIds
+        });
+        return res.data;
+    }
 };

@@ -29,6 +29,26 @@ class ImageAsset(BaseModel):
     selected_id: Optional[str] = Field(None, description="ID of the currently selected variant")
     variants: List[ImageVariant] = Field(default_factory=list, description="History of generated variants")
 
+class VideoTask(BaseModel):
+    id: str
+    project_id: str
+    frame_id: Optional[str] = Field(None, description="ID of the storyboard frame this video belongs to")
+    asset_id: Optional[str] = Field(None, description="ID of the asset this video belongs to")
+    image_url: str
+    prompt: str
+    status: str = "pending"  # pending, processing, completed, failed
+    video_url: Optional[str] = None
+    duration: int = Field(5, description="Video duration in seconds (5 or 10)")
+    seed: Optional[int] = Field(None, description="Random seed for reproducibility")
+    resolution: str = Field("720p", description="Video resolution")
+    generate_audio: bool = Field(False, description="Whether to generate audio")
+    audio_url: Optional[str] = Field(None, description="URL of generated/uploaded audio")
+    prompt_extend: bool = Field(True, description="Whether to use prompt extension")
+    negative_prompt: Optional[str] = Field(None, description="Negative prompt")
+    model: str = Field("wan2.6-i2v", description="Model used for generation")
+    shot_type: str = Field("single", description="Shot type: 'single' or 'multi' (only for wan2.6-i2v)")
+    created_at: float = Field(default_factory=time.time)
+
 class Character(BaseModel):
     id: str = Field(..., description="Unique identifier for the character")
     name: str = Field(..., description="Name of the character")
@@ -54,6 +74,10 @@ class Character(BaseModel):
     headshot_image_url: Optional[str] = Field(None, description="URL of the headshot/avatar (Legacy)")
     headshot_prompt: Optional[str] = Field(None, description="Prompt used for headshot generation")
     headshot_asset: Optional[ImageAsset] = Field(default_factory=ImageAsset, description="Headshot asset container")
+
+    # Video Assets (New for R2V)
+    video_assets: List[VideoTask] = Field(default_factory=list, description="Generated reference videos for this character")
+    video_prompt: Optional[str] = Field(None, description="Prompt used for video generation")
 
     # Legacy fields (kept for compatibility, mapped to new fields)
     image_url: Optional[str] = Field(None, description="Legacy: mapped to three_view_image_url")
@@ -81,6 +105,11 @@ class Scene(BaseModel):
     lighting_mood: Optional[str] = Field(None, description="Lighting atmosphere")
     image_url: Optional[str] = Field(None, description="URL of the generated scene reference image (Legacy)")
     image_asset: Optional[ImageAsset] = Field(default_factory=ImageAsset, description="Scene image asset container")
+    
+    # Video Assets (New for R2V)
+    video_assets: List[VideoTask] = Field(default_factory=list, description="Generated reference videos for this scene")
+    video_prompt: Optional[str] = Field(None, description="Prompt used for video generation")
+    
     locked: bool = Field(False, description="Whether this asset is locked from regeneration")
     status: GenerationStatus = GenerationStatus.PENDING
 
@@ -94,6 +123,11 @@ class Prop(BaseModel):
     bgm_url: Optional[str] = None
     image_url: Optional[str] = Field(None, description="URL of the generated prop image (Legacy)")
     image_asset: Optional[ImageAsset] = Field(default_factory=ImageAsset, description="Prop image asset container")
+    
+    # Video Assets (New for R2V)
+    video_assets: List[VideoTask] = Field(default_factory=list, description="Generated reference videos for this prop")
+    video_prompt: Optional[str] = Field(None, description="Prompt used for video generation")
+    
     locked: bool = Field(False, description="Whether this asset is locked from regeneration")
     status: GenerationStatus = GenerationStatus.PENDING
 
@@ -132,26 +166,6 @@ class StoryboardFrame(BaseModel):
     locked: bool = Field(False, description="Whether this frame is locked from regeneration")
     status: GenerationStatus = GenerationStatus.PENDING
     updated_at: float = Field(default_factory=time.time, description="Timestamp of last update")
-
-class VideoTask(BaseModel):
-    id: str
-    project_id: str
-    frame_id: Optional[str] = Field(None, description="ID of the storyboard frame this video belongs to")
-    image_url: str
-    prompt: str
-    status: str = "pending"  # pending, processing, completed, failed
-    video_url: Optional[str] = None
-    duration: int = Field(5, description="Video duration in seconds (5 or 10)")
-    seed: Optional[int] = Field(None, description="Random seed for reproducibility")
-    resolution: str = Field("720p", description="Video resolution")
-    generate_audio: bool = Field(False, description="Whether to generate audio")
-    audio_url: Optional[str] = Field(None, description="URL of generated/uploaded audio")
-    prompt_extend: bool = Field(True, description="Whether to use prompt extension")
-    negative_prompt: Optional[str] = Field(None, description="Negative prompt")
-    model: str = Field("wan2.6-i2v", description="Model used for generation")
-    shot_type: str = Field("single", description="Shot type: 'single' or 'multi' (only for wan2.6-i2v)")
-    created_at: float = Field(default_factory=time.time)
-
 
 class ModelSettings(BaseModel):
     """Model selection settings for different generation stages"""

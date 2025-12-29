@@ -7,6 +7,7 @@ from http import HTTPStatus
 import dashscope
 from dashscope import ImageSynthesis
 from ..utils import get_logger
+from ..utils.oss_utils import OSSImageUploader
 
 logger = get_logger(__name__)
 
@@ -36,23 +37,20 @@ class ImageGenModel(ABC):
 class WanxImageModel(ImageGenModel):
     def __init__(self, config):
         super().__init__(config)
-        self.api_key = config.get('api_key')
-        if not self.api_key:
-            self.api_key = os.getenv("DASHSCOPE_API_KEY")
-            
-        if not self.api_key:
-             logger.warning("Dashscope API Key not found in config or environment variables.")
-        
-        dashscope.api_key = self.api_key
         self.params = config.get('params', {})
-        
-        # Initialize OSS Uploader
-        from ..utils.oss_utils import OSSImageUploader
-        self.oss_uploader = OSSImageUploader()
+
+    @property
+    def api_key(self):
+        api_key = os.getenv("DASHSCOPE_API_KEY")
+        if not api_key:
+            logger.warning("Dashscope API Key not found in config or environment variables.")
+        return api_key
 
     def generate(self, prompt: str, output_path: str, ref_image_path: str = None, ref_image_paths: list = None, model_name: str = None, **kwargs) -> Tuple[str, float]:
         # Determine model based on whether reference image is provided
         # Support both single path (legacy) and list of paths
+        dashscope.api_key = self.api_key
+
         all_ref_paths = []
         if ref_image_path:
             all_ref_paths.append(ref_image_path)
@@ -61,18 +59,20 @@ class WanxImageModel(ImageGenModel):
             
         # Remove duplicates
         all_ref_paths = list(set(all_ref_paths))
-
         # Model selection priority: explicit model_name > config params > defaults
+
         if model_name:
             final_model_name = model_name
         elif all_ref_paths:
             final_model_name = self.params.get('i2i_model_name', 'wan2.5-i2i-preview')
         else:
             final_model_name = self.params.get('model_name', 'wan2.6-t2i')
-        
+
         if all_ref_paths:
+            model_name = self.params.get('i2i_model_name', 'wan2.5-i2i-preview')
             logger.info(f"Using I2I model: {final_model_name} with {len(all_ref_paths)} reference images")
         else:
+            model_name = self.params.get('model_name', 'wan2.2-t2i-plus')
             logger.info(f"Using T2I model: {final_model_name}")
 
         size = kwargs.pop('size', self.params.get('size', '1280*1280'))
@@ -84,10 +84,9 @@ class WanxImageModel(ImageGenModel):
         logger.info(f"Starting image generation...")
         logger.info(f"Prompt: {prompt}")
         logger.info(f"Model: {final_model_name}, Size: {size}, N: {n}")
-        
+
         try:
             api_start_time = time.time()
-            
             # Use HTTP API for wan2.6 models (SDK not supported yet)
             if final_model_name == 'wan2.6-t2i':
                 image_url = self._generate_wan26_http(prompt, size, n, negative_prompt)
@@ -96,11 +95,12 @@ class WanxImageModel(ImageGenModel):
                 image_url = self._generate_wan26_image_http(prompt, size, n, negative_prompt, all_ref_paths)
             else:
                 # Use SDK for other models
-                image_url = self._generate_sdk(prompt, final_model_name, size, n, negative_prompt, all_ref_paths, kwargs)
-            
+                image_url = self._generate_sdk(prompt, final_model_name, size, n, negative_prompt, all_ref_paths,
+                                               kwargs)
+
             api_end_time = time.time()
             api_duration = api_end_time - api_start_time
-            
+
             logger.info(f"Generation success. Image URL: {image_url}")
             logger.info(f"API duration: {api_duration:.2f}s")
             
@@ -152,7 +152,7 @@ class WanxImageModel(ImageGenModel):
         logger.info(f"Calling Wan 2.6 T2I HTTP API...")
         logger.info(f"Payload: {payload}")
         
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        response = requests.post(url, headers=headers, json=payload, timeout=300)  # 5 minutes for slow API responses
         
         logger.info(f"Response status: {response.status_code}")
         logger.info(f"Response body: {response.text[:500]}...")
@@ -199,14 +199,28 @@ class WanxImageModel(ImageGenModel):
         if ref_image_paths:
             for path in ref_image_paths[:3]:  # Limit to 3 images
                 if os.path.exists(path):
-                    # Upload local file to OSS
-                    image_url = self.oss_uploader.upload_image(path)
-                    if image_url:
-                        content.append({"image": image_url})
-                        logger.info(f"Reference image uploaded: {image_url}")
+                    # Upload local file to OSS and get signed URL for AI API
+                    uploader = OSSImageUploader()
+                    if uploader.is_configured:
+                        object_key = uploader.upload_file(path, sub_path="temp/ref_images")
+                        if object_key:
+                            # Generate signed URL for AI API access (30 min validity)
+                            signed_url = uploader.sign_url_for_api(object_key)
+                            content.append({"image": signed_url})
+                            logger.info(f"Reference image uploaded, signed URL: {signed_url[:80]}...")
+                    else:
+                        # OSS not configured, try to use local path (will likely fail for remote APIs)
+                        logger.warning(f"OSS not configured, cannot upload reference image: {path}")
                 elif path.startswith("http"):
-                    # Already a URL
+                    # Already a URL (could be signed or public)
                     content.append({"image": path})
+                elif "/" in path and not path.startswith("output/"):
+                    # Might be an Object Key, generate signed URL
+                    uploader = OSSImageUploader()
+                    if uploader.is_configured:
+                        signed_url = uploader.sign_url_for_api(path)
+                        content.append({"image": signed_url})
+                        logger.info(f"Reference image (Object Key), signed URL: {signed_url[:80]}...")
                 else:
                     logger.warning(f"Reference image not found: {path}")
         
@@ -237,7 +251,7 @@ class WanxImageModel(ImageGenModel):
         logger.info(f"Payload: {payload}")
         
         # Step 1: Create task
-        response = requests.post(create_url, headers=headers, json=payload, timeout=60)
+        response = requests.post(create_url, headers=headers, json=payload, timeout=120)  # 2 minutes for task creation
         
         logger.info(f"Create task response status: {response.status_code}")
         logger.info(f"Create task response body: {response.text[:500]}")
@@ -260,7 +274,7 @@ class WanxImageModel(ImageGenModel):
             "Authorization": f"Bearer {self.api_key}"
         }
         
-        max_wait_time = 300  # 5 minutes max wait
+        max_wait_time = 600  # 10 minutes max wait (I2I can take longer)
         poll_interval = 10   # Poll every 10 seconds
         elapsed = 0
         
@@ -325,27 +339,42 @@ class WanxImageModel(ImageGenModel):
         call_args.update(kwargs)
         
         logger.info(f"SDK call_args: {dict((k, v) for k, v in call_args.items() if k != 'images')}")
+        # Model selection priority: explicit model_name > config params > defaults
 
         # Handle Reference Images for I2I
         if all_ref_paths:
             ref_image_urls = []
+            uploader = OSSImageUploader()
             for path in all_ref_paths:
-                if not os.path.exists(path):
+                if os.path.exists(path):
+                    # Upload to OSS and get signed URL
+                    if uploader.is_configured:
+                        object_key = uploader.upload_file(path, sub_path="temp/ref_images")
+                        if object_key:
+                            signed_url = uploader.sign_url_for_api(object_key)
+                            ref_image_urls.append(signed_url)
+                            logger.info(f"Reference image uploaded, signed URL: {signed_url[:80]}...")
+                        else:
+                            raise RuntimeError(f"Failed to upload reference image to OSS: {path}")
+                    else:
+                        logger.warning(f"OSS not configured, cannot upload reference image: {path}")
+                elif path.startswith("http"):
+                    # Already a URL
+                    ref_image_urls.append(path)
+                elif "/" in path and not path.startswith("output/"):
+                    # Might be an Object Key, generate signed URL
+                    if uploader.is_configured:
+                        signed_url = uploader.sign_url_for_api(path)
+                        ref_image_urls.append(signed_url)
+                        logger.info(f"Reference image (Object Key), signed URL: {signed_url[:80]}...")
+                else:
                     raise ValueError(f"Reference image not found: {path}")
-                
-                # Upload to OSS
-                url = self.oss_uploader.upload_image(path)
-                if not url:
-                    raise RuntimeError(f"Failed to upload reference image to OSS: {path}")
-                ref_image_urls.append(url)
-                print(f"Reference image uploaded: {url}")
             
-            print(f"DEBUG: ref_image_urls count: {len(ref_image_urls)}")
-            print(f"DEBUG: ref_image_urls: {ref_image_urls}")
+            logger.info(f"DEBUG: ref_image_urls count: {len(ref_image_urls)}")
             
             # Limit to 3 images to avoid "InvalidParameter" error (suspected limit)
             if len(ref_image_urls) > 3:
-                print(f"WARNING: Limiting reference images from {len(ref_image_urls)} to 3")
+                logger.warning(f"Limiting reference images from {len(ref_image_urls)} to 3")
                 ref_image_urls = ref_image_urls[:3]
             
             call_args['images'] = ref_image_urls
@@ -402,7 +431,7 @@ class WanxImageModel(ImageGenModel):
 
         temp_path = output_path + ".tmp"
         try:
-            response = http.get(url, stream=True, timeout=30, verify=False) # verify=False to avoid some SSL issues
+            response = http.get(url, stream=True, timeout=60, verify=False) # verify=False to avoid some SSL issues
             response.raise_for_status()
             
             # Ensure directory exists

@@ -6,6 +6,7 @@ import { X, RefreshCw, Check, AlertTriangle, Image as ImageIcon, Lock, Unlock, C
 import { api, API_URL } from "@/lib/api";
 
 import { VariantSelector } from "../common/VariantSelector";
+import { VideoVariantSelector } from "../common/VideoVariantSelector";
 import { useProjectStore } from "@/store/projectStore";
 
 interface CharacterWorkbenchProps {
@@ -16,10 +17,13 @@ interface CharacterWorkbenchProps {
     generatingTypes: { type: string; batchSize: number }[];
     stylePrompt?: string;
     styleNegativePrompt?: string;
+    onGenerateVideo?: (prompt: string, duration: number) => void;
+    onDeleteVideo?: (videoId: string) => void;
+    isGeneratingVideo?: boolean;
 }
 
-export default function CharacterWorkbench({ asset, onClose, onUpdateDescription, onGenerate, generatingTypes = [], stylePrompt = "", styleNegativePrompt = "" }: CharacterWorkbenchProps) {
-    const [activePanel, setActivePanel] = useState<"full_body" | "three_view" | "headshot">("full_body");
+export default function CharacterWorkbench({ asset, onClose, onUpdateDescription, onGenerate, generatingTypes = [], stylePrompt = "", styleNegativePrompt = "", onGenerateVideo, onDeleteVideo, isGeneratingVideo }: CharacterWorkbenchProps) {
+    const [activePanel, setActivePanel] = useState<"full_body" | "three_view" | "headshot" | "video">("full_body");
     const updateProject = useProjectStore(state => state.updateProject);
     const currentProject = useProjectStore(state => state.currentProject);
 
@@ -27,6 +31,7 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
     const [fullBodyPrompt, setFullBodyPrompt] = useState(asset.full_body_prompt || "");
     const [threeViewPrompt, setThreeViewPrompt] = useState(asset.three_view_prompt || "");
     const [headshotPrompt, setHeadshotPrompt] = useState(asset.headshot_prompt || "");
+    const [videoPrompt, setVideoPrompt] = useState(asset.video_prompt || "");
 
     // New State for Style Control
     const [applyStyle, setApplyStyle] = useState(true);
@@ -46,6 +51,9 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
         if (!headshotPrompt) {
             setHeadshotPrompt(`Close-up portrait of the SAME character ${asset.name}. ${asset.description}. Zoom in on face and shoulders, detailed facial features, neutral expression, looking at viewer, high quality, masterpiece.`);
         }
+        if (!videoPrompt) {
+            setVideoPrompt(`Cinematic shot of ${asset.name}, ${asset.description}, looking around, breathing, slight movement, high quality, 4k`);
+        }
     }, [asset.name, asset.description]);
 
     // Update local state when asset updates (e.g. after generation)
@@ -53,6 +61,7 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
         if (asset.full_body_prompt) setFullBodyPrompt(asset.full_body_prompt);
         if (asset.three_view_prompt) setThreeViewPrompt(asset.three_view_prompt);
         if (asset.headshot_prompt) setHeadshotPrompt(asset.headshot_prompt);
+        if (asset.video_prompt) setVideoPrompt(asset.video_prompt);
     }, [asset]);
 
     const handleGenerateClick = (type: "full_body" | "three_view" | "headshot", batchSize: number) => {
@@ -223,6 +232,31 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
                         aspectRatio="1:1"
                     />
 
+                    {/* Divider */}
+                    <div className="w-px bg-white/10 flex items-center justify-center">
+                        <ChevronRight size={16} className="text-gray-600" />
+                    </div>
+
+                    {/* Panel 4: Reference Video */}
+                    <WorkbenchPanel
+                        title="4. Reference Video"
+                        isActive={activePanel === "video"}
+                        onClick={() => setActivePanel("video")}
+
+                        // Video specific props
+                        isVideo={true}
+                        videos={asset.video_assets || []}
+                        onDeleteVideo={onDeleteVideo}
+                        onGenerateVideo={(duration: number) => onGenerateVideo?.(videoPrompt, duration)}
+
+                        prompt={videoPrompt}
+                        setPrompt={setVideoPrompt}
+                        isGenerating={isGeneratingVideo}
+                        isLocked={!asset.full_body_image_url}
+                        description="Motion reference for video generation."
+                        aspectRatio="16:9"
+                    />
+
                 </div>
 
                 {/* Footer: Negative Prompt & Art Direction Settings */}
@@ -331,7 +365,12 @@ function WorkbenchPanel({
     status,
     isLocked,
     description,
-    aspectRatio = "9:16"
+    aspectRatio = "9:16",
+    // Video specific
+    isVideo = false,
+    videos,
+    onDeleteVideo,
+    onGenerateVideo
 }: any) {
     return (
         <div
@@ -361,18 +400,29 @@ function WorkbenchPanel({
 
                 {/* Variant Selector */}
                 <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700">
-                    <VariantSelector
-                        asset={asset}
-                        currentImageUrl={currentImageUrl}
-                        onSelect={onSelect}
-                        onDelete={onDelete}
-                        onFavorite={onFavorite}
-                        onGenerate={onGenerate}
-                        isGenerating={isGenerating}
-                        generatingBatchSize={generatingBatchSize}
-                        aspectRatio={aspectRatio}
-                        className="h-full"
-                    />
+                    {isVideo ? (
+                        <VideoVariantSelector
+                            videos={videos}
+                            onDelete={onDeleteVideo}
+                            onGenerate={onGenerateVideo}
+                            isGenerating={isGenerating}
+                            aspectRatio={aspectRatio}
+                            className="h-full"
+                        />
+                    ) : (
+                        <VariantSelector
+                            asset={asset}
+                            currentImageUrl={currentImageUrl}
+                            onSelect={onSelect}
+                            onDelete={onDelete}
+                            onFavorite={onFavorite}
+                            onGenerate={onGenerate}
+                            isGenerating={isGenerating}
+                            generatingBatchSize={generatingBatchSize}
+                            aspectRatio={aspectRatio}
+                            className="h-full"
+                        />
+                    )}
                 </div>
 
                 {/* Status Overlay (if outdated) */}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ImageAsset, ImageVariant } from '@/store/projectStore';
 import { Trash2, Check, ChevronLeft, ChevronRight, Layers, X, Maximize2, Star } from 'lucide-react';
+import { API_URL } from '@/lib/api';
 
 interface VariantSelectorProps {
     asset: ImageAsset | undefined;
@@ -14,6 +15,9 @@ interface VariantSelectorProps {
     className?: string;
     aspectRatio?: string; // e.g., "9:16", "16:9", "1:1"
 }
+
+// Use the API_URL constant for consistent behavior
+const getApiBaseUrl = () => API_URL;
 
 export const VariantSelector: React.FC<VariantSelectorProps> = ({
     asset,
@@ -46,9 +50,10 @@ export const VariantSelector: React.FC<VariantSelectorProps> = ({
 
     // Determine the image to display
     const selectedVariant = asset?.variants?.find(v => v.id === asset.selected_id);
+    const apiBase = getApiBaseUrl();
     const displayUrl = selectedVariant ?
-        (selectedVariant.url.startsWith('http') ? selectedVariant.url : `http://localhost:8000/files/${selectedVariant.url}`) :
-        (currentImageUrl ? (currentImageUrl.startsWith('http') ? currentImageUrl : `http://localhost:8000/files/${currentImageUrl}`) : null);
+        (selectedVariant.url.startsWith('http') ? selectedVariant.url : `${apiBase}/files/${selectedVariant.url}`) :
+        (currentImageUrl ? (currentImageUrl.startsWith('http') ? currentImageUrl : `${apiBase}/files/${currentImageUrl}`) : null);
 
     const variants = asset?.variants || [];
 
@@ -152,7 +157,7 @@ export const VariantSelector: React.FC<VariantSelectorProps> = ({
                             {variants.map((variant) => {
                                 const isSelected = variant.id === asset?.selected_id;
                                 const isFavorited = (variant as any).is_favorited || false;
-                                const url = variant.url.startsWith('http') ? variant.url : `http://localhost:8000/files/${variant.url}`;
+                                const url = variant.url.startsWith('http') ? variant.url : `${apiBase}/files/${variant.url}`;
 
                                 return (
                                     <div
@@ -185,8 +190,8 @@ export const VariantSelector: React.FC<VariantSelectorProps> = ({
                                                     onFavorite(variant.id, !isFavorited);
                                                 }}
                                                 className={`absolute top-1 right-1 p-1 rounded-full transition-all ${isFavorited
-                                                        ? 'bg-yellow-500 text-white'
-                                                        : 'bg-black/50 text-gray-300 opacity-0 group-hover/variant:opacity-100 hover:bg-yellow-500 hover:text-white'
+                                                    ? 'bg-yellow-500 text-white'
+                                                    : 'bg-black/50 text-gray-300 opacity-0 group-hover/variant:opacity-100 hover:bg-yellow-500 hover:text-white'
                                                     }`}
                                                 title={isFavorited ? 'Click to unfavorite' : 'Click to favorite (protected from auto-delete)'}
                                             >

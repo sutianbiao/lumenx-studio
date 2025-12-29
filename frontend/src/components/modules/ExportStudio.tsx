@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Download, Film, Settings, CheckCircle, FileVideo, Monitor, Captions } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
-import { api } from "@/lib/api";
+import { api, API_URL } from "@/lib/api";
 
 export default function ExportStudio() {
     const currentProject = useProjectStore((state) => state.currentProject);
@@ -60,8 +60,8 @@ export default function ExportStudio() {
                                     key={res}
                                     onClick={() => setResolution(res)}
                                     className={`py-3 px-4 rounded-xl border text-sm font-bold transition-all ${resolution === res
-                                            ? "bg-primary text-white border-primary shadow-lg shadow-primary/20"
-                                            : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"
+                                        ? "bg-primary text-white border-primary shadow-lg shadow-primary/20"
+                                        : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"
                                         }`}
                                 >
                                     {res}
@@ -81,8 +81,8 @@ export default function ExportStudio() {
                                     key={fmt}
                                     onClick={() => setFormat(fmt)}
                                     className={`py-3 px-4 rounded-xl border text-sm font-bold uppercase transition-all ${format === fmt
-                                            ? "bg-primary text-white border-primary shadow-lg shadow-primary/20"
-                                            : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"
+                                        ? "bg-primary text-white border-primary shadow-lg shadow-primary/20"
+                                        : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"
                                         }`}
                                 >
                                     {fmt}
@@ -106,8 +106,8 @@ export default function ExportStudio() {
                                     key={opt.id}
                                     onClick={() => setSubtitles(opt.id)}
                                     className={`w-full py-3 px-4 rounded-xl border text-sm font-medium text-left transition-all ${subtitles === opt.id
-                                            ? "bg-primary text-white border-primary shadow-lg shadow-primary/20"
-                                            : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"
+                                        ? "bg-primary text-white border-primary shadow-lg shadow-primary/20"
+                                        : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"
                                         }`}
                                 >
                                     {opt.label}
@@ -152,7 +152,7 @@ export default function ExportStudio() {
                             <p className="text-gray-400 mb-8">Your video is ready to be shared with the world.</p>
 
                             <a
-                                href={`http://localhost:8000/files/${exportUrl}`}
+                                href={`${API_URL}/files/${exportUrl}`}
                                 target="_blank"
                                 className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white px-8 py-4 rounded-xl font-bold text-lg transition-colors shadow-lg shadow-green-600/20"
                             >

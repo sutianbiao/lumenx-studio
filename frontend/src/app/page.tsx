@@ -2,16 +2,23 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Plus, FolderOpen, RefreshCw } from "lucide-react";
+import { Plus, FolderOpen, Key, RefreshCw } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
 import ProjectCard from "@/components/project/ProjectCard";
 import CreateProjectDialog from "@/components/project/CreateProjectDialog";
+import EnvConfigDialog from "@/components/project/EnvConfigDialog";
 import CreativeCanvas from "@/components/canvas/CreativeCanvas";
+import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
+
+const ProjectClient = dynamic(() => import("@/app/project/[id]/ProjectClient"), { ssr: false });
 
 export default function Home() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isEnvDialogOpen, setIsEnvDialogOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [currentView, setCurrentView] = useState<'home' | 'project'>('home');
+  const [projectId, setProjectId] = useState<string | null>(null);
   const projects = useProjectStore((state) => state.projects);
   const deleteProject = useProjectStore((state) => state.deleteProject);
   const setProjects = useProjectStore((state) => state.setProjects);
@@ -34,8 +41,35 @@ export default function Home() {
       setIsSyncing(false);
     }
   };
+  // 监听 hash 变化
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#/project/')) {
+        const id = hash.replace('#/project/', '');
+        setProjectId(id);
+        setCurrentView('project');
+      } else {
+        setCurrentView('home');
+        setProjectId(null);
+      }
+    };
+
+    // 初始化时检查 hash
+    handleHashChange();
+
+    // 监听 hash 变化
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // 如果是项目详情页，渲染项目详情组件
+  if (currentView === 'project' && projectId) {
+    return <ProjectClient params={{ id: projectId }} />;
+  }
 
   return (
+
     <main className="relative h-screen w-screen bg-background flex flex-col">
       {/* Background Canvas */}
       <div className="fixed inset-0 z-0 pointer-events-none">
@@ -55,7 +89,7 @@ export default function Home() {
               {/* Logo */}
               <div className="flex-shrink-0">
                 <img
-                  src="/LumenX.png"
+                  src="LumenX.png"
                   alt="LumenX"
                   className="w-16 h-16 object-contain"
                 />
@@ -87,6 +121,14 @@ export default function Home() {
                     Studio
                   </span>
                 </div>
+                <button
+                  onClick={() => setIsEnvDialogOpen(true)}
+                  className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors"
+                  title="API Key & OSS 配置"
+                >
+                  <Key size={18} />
+                  API 配置
+                </button>
               </div>
             </div>
 
@@ -170,6 +212,13 @@ export default function Home() {
       <CreateProjectDialog
         isOpen={isDialogOpen}
         onClose={() => setIsDialogOpen(false)}
+      />
+
+      {/* Environment Configuration Dialog */}
+      <EnvConfigDialog
+        isOpen={isEnvDialogOpen}
+        onClose={() => setIsEnvDialogOpen(false)}
+        isRequired={false}
       />
     </main>
   );

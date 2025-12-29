@@ -5,10 +5,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
     Layout, Image as ImageIcon, Box, Type, Move,
     ZoomIn, ZoomOut, Layers, Settings, Play,
-    ChevronRight, ChevronLeft, Trash2, Copy, Wand2, Users, FileText, RefreshCw, Loader2, X, Lock, Unlock
+    ChevronRight, ChevronLeft, Trash2, Copy, Wand2, Users, FileText, RefreshCw, Loader2, X, Lock, Unlock,
+    Plus, ArrowUp, ArrowDown
 } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
-import { api, API_URL } from "@/lib/api";
+import { api, API_URL, crudApi } from "@/lib/api";
 import { getAssetUrl } from "@/lib/utils";
 
 import StoryboardFrameEditor from "./StoryboardFrameEditor";
@@ -26,6 +27,8 @@ export default function StoryboardComposer() {
 
     const [isReparsing, setIsReparsing] = useState(false);
     const [editingFrameId, setEditingFrameId] = useState<string | null>(null);
+    const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+    const [insertIndex, setInsertIndex] = useState<number | null>(null);
 
     const handleReparse = async () => {
         if (!currentProject) return;
@@ -47,6 +50,82 @@ export default function StoryboardComposer() {
     const handleImageClick = (frameId: string, e: React.MouseEvent) => {
         e.stopPropagation();
         setEditingFrameId(frameId);
+    };
+
+    const handleDeleteFrame = async (frameId: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!currentProject) return;
+        if (!confirm("Are you sure you want to delete this frame?")) return;
+
+        try {
+            await crudApi.deleteFrame(currentProject.id, frameId);
+            const updatedProject = await api.getProject(currentProject.id);
+            updateProject(currentProject.id, updatedProject);
+        } catch (error) {
+            console.error("Failed to delete frame:", error);
+            alert("Failed to delete frame");
+        }
+    };
+
+    const handleCopyFrame = async (frameId: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!currentProject) return;
+
+        try {
+            await crudApi.copyFrame(currentProject.id, frameId);
+            const updatedProject = await api.getProject(currentProject.id);
+            updateProject(currentProject.id, updatedProject);
+        } catch (error) {
+            console.error("Failed to copy frame:", error);
+            alert("Failed to copy frame");
+        }
+    };
+
+    const handleCreateFrame = async (data: any) => {
+        if (!currentProject) return;
+
+        try {
+            await crudApi.createFrame(currentProject.id, {
+                ...data,
+                insert_at: insertIndex !== null ? insertIndex : undefined
+            });
+            const updatedProject = await api.getProject(currentProject.id);
+            updateProject(currentProject.id, updatedProject);
+            setIsCreateDialogOpen(false);
+            setInsertIndex(null);
+        } catch (error) {
+            console.error("Failed to create frame:", error);
+            alert("Failed to create frame");
+        }
+    };
+
+    const handleMoveFrame = async (index: number, direction: 'up' | 'down', e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!currentProject || !currentProject.frames) return;
+
+        const newIndex = direction === 'up' ? index - 1 : index + 1;
+        if (newIndex < 0 || newIndex >= currentProject.frames.length) return;
+
+        // Create new order
+        const newFrames = [...currentProject.frames];
+        const [movedFrame] = newFrames.splice(index, 1);
+        newFrames.splice(newIndex, 0, movedFrame);
+
+        const newOrderIds = newFrames.map((f: any) => f.id);
+
+        try {
+            // Optimistic update
+            updateProject(currentProject.id, { ...currentProject, frames: newFrames });
+
+            await crudApi.reorderFrames(currentProject.id, newOrderIds);
+            // No need to fetch again if optimistic update was correct, but good for safety
+        } catch (error) {
+            console.error("Failed to reorder frames:", error);
+            alert("Failed to reorder frames");
+            // Revert on error would be ideal here by fetching project again
+            const project = await api.getProject(currentProject.id);
+            updateProject(currentProject.id, project);
+        }
     };
 
     const handleRenderFrame = async (frame: any, batchSize: number = 1, e?: React.MouseEvent) => {
@@ -199,119 +278,180 @@ export default function StoryboardComposer() {
 
                 <div className="flex-1 overflow-y-auto p-8">
                     <div className="max-w-4xl mx-auto space-y-6">
-                        {currentProject?.frames?.map((frame: any, index: number) => (
-                            <motion.div
-                                key={frame.id}
-                                layoutId={frame.id}
-                                onClick={() => setSelectedFrameId(frame.id)}
-                                className={`group relative flex gap-6 p-4 rounded-xl border transition-all cursor-pointer ${selectedFrameId === frame.id
-                                    ? "bg-white/5 border-primary ring-1 ring-primary"
-                                    : "bg-[#161616] border-white/5 hover:border-white/20"
-                                    }`}
+                        {/* Add Frame Button (Top) */}
+                        <div className="flex justify-center">
+                            <button
+                                onClick={() => { setInsertIndex(0); setIsCreateDialogOpen(true); }}
+                                className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg transition-colors border border-dashed border-white/10 hover:border-white/30"
                             >
-                                {/* Frame Number */}
-                                <div className="absolute -left-3 -top-3 w-8 h-8 rounded-full bg-[#222] border border-white/10 flex items-center justify-center text-xs font-bold text-gray-400 shadow-lg z-10">
-                                    {index + 1}
-                                </div>
+                                <Plus size={16} />
+                                <span className="text-sm font-medium">Insert Frame at Start</span>
+                            </button>
+                        </div>
 
-                                {/* Image Preview */}
-                                <div className="w-64 aspect-video bg-black/40 rounded-lg border border-white/5 overflow-hidden flex-shrink-0 relative">
-                                    {frame.rendered_image_url || frame.image_url ? (
-                                        <ImageWithRetry
-                                            key={frame.id + (frame.updated_at || 0)} // Force remount on refresh
-                                            src={getAssetUrl(frame.rendered_image_url || frame.image_url) + `?t=${frame.updated_at || 0}`}
-                                            alt={`Frame ${index + 1}`}
-                                            className="w-full h-full object-cover cursor-zoom-in"
-                                            onClick={(e: React.MouseEvent) => handleImageClick(frame.id, e)}
-                                        />
-                                    ) : (
-                                        <div className="w-full h-full flex flex-col items-center justify-center text-gray-600 gap-2">
-                                            <ImageIcon size={24} className="opacity-20" />
-                                            <span className="text-[10px]">No Image</span>
+                        {currentProject?.frames?.map((frame: any, index: number) => (
+                            <>
+                                <motion.div
+                                    key={frame.id}
+                                    layoutId={frame.id}
+                                    onClick={() => setSelectedFrameId(frame.id)}
+                                    className={`group relative flex gap-6 p-4 rounded-xl border transition-all cursor-pointer ${selectedFrameId === frame.id
+                                        ? "bg-white/5 border-primary ring-1 ring-primary"
+                                        : "bg-[#161616] border-white/5 hover:border-white/20"
+                                        }`}
+                                >
+                                    {/* Frame Number */}
+                                    <div className="absolute -left-3 -top-3 w-8 h-8 rounded-full bg-[#222] border border-white/10 flex items-center justify-center text-xs font-bold text-gray-400 shadow-lg z-10">
+                                        {index + 1}
+                                    </div>
+
+                                    {/* Image Preview */}
+                                    <div className="w-64 aspect-video bg-black/40 rounded-lg border border-white/5 overflow-hidden flex-shrink-0 relative">
+                                        {frame.rendered_image_url || frame.image_url ? (
+                                            <ImageWithRetry
+                                                key={frame.id + (frame.updated_at || 0)} // Force remount on refresh
+                                                src={getAssetUrl(frame.rendered_image_url || frame.image_url) + `?t=${frame.updated_at || 0}`}
+                                                alt={`Frame ${index + 1}`}
+                                                className="w-full h-full object-cover cursor-zoom-in"
+                                                onClick={(e: React.MouseEvent) => handleImageClick(frame.id, e)}
+                                            />
+                                        ) : (
+                                            <div className="w-full h-full flex flex-col items-center justify-center text-gray-600 gap-2">
+                                                <ImageIcon size={24} className="opacity-20" />
+                                                <span className="text-[10px]">No Image</span>
+                                            </div>
+                                        )
+
+                                        }
+
+                                        {/* Hover Actions - pointer-events-none to allow image click */}
+                                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 pointer-events-none">
+                                            {/* Lock Button */}
+                                            <button
+                                                onClick={async (e) => {
+                                                    e.stopPropagation();
+                                                    if (!currentProject) return;
+                                                    try {
+                                                        await api.toggleFrameLock(currentProject.id, frame.id);
+                                                        const updated = await api.getProject(currentProject.id);
+                                                        updateProject(currentProject.id, updated);
+                                                    } catch (error) {
+                                                        console.error("Toggle lock failed:", error);
+                                                    }
+                                                }}
+                                                className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-bold flex items-center gap-1 pointer-events-auto"
+                                                title={frame.locked ? "解锁" : "锁定"}
+                                            >
+                                                {frame.locked ? <Unlock size={14} /> : <Lock size={14} />}
+                                            </button>
+
+                                            {/* Render Buttons with Batch Size - only show if not locked */}
+                                            {!frame.locked && (
+                                                <div className="flex items-center gap-1 pointer-events-auto">
+                                                    {renderingFrames.has(frame.id) ? (
+                                                        <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 rounded-lg">
+                                                            <Loader2 size={14} className="animate-spin text-white" />
+                                                            <span className="text-xs text-white">Generating...</span>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            {[1, 2, 3, 4].map(size => (
+                                                                <button
+                                                                    key={size}
+                                                                    onClick={(e) => { e.stopPropagation(); handleRenderFrame(frame, size); }}
+                                                                    className="px-2 py-1.5 bg-primary/80 hover:bg-primary text-white rounded text-xs font-bold transition-colors"
+                                                                    title={`Generate ${size} variant${size > 1 ? 's' : ''}`}
+                                                                >
+                                                                    <div className="flex items-center gap-1">
+                                                                        <Wand2 size={12} />
+                                                                        <span>×{size}</span>
+                                                                    </div>
+                                                                </button>
+                                                            ))}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
-                                    )
+                                    </div>
 
-                                    }
+                                    {/* Content */}
+                                    <div className="flex-1 flex flex-col gap-3">
+                                        <div className="flex items-start justify-between">
+                                            <div className="space-y-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Action</span>
+                                                    {frame.camera_movement && (
+                                                        <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded border border-blue-500/30">
+                                                            {frame.camera_movement}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="text-sm text-gray-200 leading-relaxed line-clamp-3">
+                                                    {frame.action_description}
+                                                </p>
+                                            </div>
+                                        </div>
 
-                                    {/* Hover Actions - pointer-events-none to allow image click */}
-                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 pointer-events-none">
-                                        {/* Lock Button */}
-                                        <button
-                                            onClick={async (e) => {
-                                                e.stopPropagation();
-                                                if (!currentProject) return;
-                                                try {
-                                                    await api.toggleFrameLock(currentProject.id, frame.id);
-                                                    const updated = await api.getProject(currentProject.id);
-                                                    updateProject(currentProject.id, updated);
-                                                } catch (error) {
-                                                    console.error("Toggle lock failed:", error);
-                                                }
-                                            }}
-                                            className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-bold flex items-center gap-1 pointer-events-auto"
-                                            title={frame.locked ? "解锁" : "锁定"}
-                                        >
-                                            {frame.locked ? <Unlock size={14} /> : <Lock size={14} />}
-                                        </button>
-
-                                        {/* Render Buttons with Batch Size - only show if not locked */}
-                                        {!frame.locked && (
-                                            <div className="flex items-center gap-1 pointer-events-auto">
-                                                {renderingFrames.has(frame.id) ? (
-                                                    <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 rounded-lg">
-                                                        <Loader2 size={14} className="animate-spin text-white" />
-                                                        <span className="text-xs text-white">Generating...</span>
-                                                    </div>
-                                                ) : (
-                                                    <>
-                                                        {[1, 2, 3, 4].map(size => (
-                                                            <button
-                                                                key={size}
-                                                                onClick={(e) => { e.stopPropagation(); handleRenderFrame(frame, size); }}
-                                                                className="px-2 py-1.5 bg-primary/80 hover:bg-primary text-white rounded text-xs font-bold transition-colors"
-                                                                title={`Generate ${size} variant${size > 1 ? 's' : ''}`}
-                                                            >
-                                                                <div className="flex items-center gap-1">
-                                                                    <Wand2 size={12} />
-                                                                    <span>×{size}</span>
-                                                                </div>
-                                                            </button>
-                                                        ))}
-                                                    </>
-                                                )}
+                                        {frame.dialogue && (
+                                            <div className="mt-auto pt-3 border-t border-white/5">
+                                                <span className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Dialogue</span>
+                                                <p className="text-sm text-gray-400 italic">"{frame.dialogue}"</p>
                                             </div>
                                         )}
-                                    </div>
-                                </div>
 
-                                {/* Content */}
-                                <div className="flex-1 flex flex-col gap-3">
-                                    <div className="flex items-start justify-between">
-                                        <div className="space-y-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Action</span>
-                                                {frame.camera_movement && (
-                                                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded border border-blue-500/30">
-                                                        {frame.camera_movement}
-                                                    </span>
-                                                )}
+                                        {/* Frame Actions */}
+                                        <div className="flex justify-end gap-2 mt-2 pt-2 border-t border-white/5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <div className="flex items-center gap-1 mr-auto">
+                                                <button
+                                                    onClick={(e) => handleMoveFrame(index, 'up', e)}
+                                                    disabled={index === 0}
+                                                    className="p-2 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    title="Move Up"
+                                                >
+                                                    <ArrowUp size={14} />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => handleMoveFrame(index, 'down', e)}
+                                                    disabled={index === (currentProject.frames?.length || 0) - 1}
+                                                    className="p-2 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    title="Move Down"
+                                                >
+                                                    <ArrowDown size={14} />
+                                                </button>
                                             </div>
-                                            <p className="text-sm text-gray-200 leading-relaxed line-clamp-3">
-                                                {frame.action_description}
-                                            </p>
+
+                                            <button
+                                                onClick={(e) => handleCopyFrame(frame.id, e)}
+                                                className="p-2 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg transition-colors"
+                                                title="Duplicate Frame"
+                                            >
+                                                <Copy size={14} />
+                                            </button>
+                                            <button
+                                                onClick={(e) => handleDeleteFrame(frame.id, e)}
+                                                className="p-2 hover:bg-red-500/20 text-gray-400 hover:text-red-400 rounded-lg transition-colors"
+                                                title="Delete Frame"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
                                         </div>
                                     </div>
+                                </motion.div>
 
-                                    {frame.dialogue && (
-                                        <div className="mt-auto pt-3 border-t border-white/5">
-                                            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Dialogue</span>
-                                            <p className="text-sm text-gray-400 italic">"{frame.dialogue}"</p>
-                                        </div>
-                                    )}
+                                {/* Add Button Between Frames */}
+                                < div className="flex justify-center opacity-0 hover:opacity-100 transition-opacity -my-3 z-10 relative" >
+                                    <button
+                                        onClick={() => { setInsertIndex(index + 1); setIsCreateDialogOpen(true); }}
+                                        className="p-1 bg-[#222] border border-white/20 rounded-full text-gray-400 hover:text-white hover:border-primary hover:bg-primary/20 transition-all transform hover:scale-110"
+                                        title="Insert Frame Here"
+                                    >
+                                        <Plus size={16} />
+                                    </button>
                                 </div>
-                            </motion.div>
+                            </>
                         ))}
-                    </div>
+                    </div >
                 </div>
             </div>
             {/* Storyboard Frame Editor Modal */}
@@ -323,6 +463,121 @@ export default function StoryboardComposer() {
                     />
                 )}
             </AnimatePresence>
+
+            {/* Create Frame Dialog */}
+            <AnimatePresence>
+                {isCreateDialogOpen && (
+                    <CreateFrameDialog
+                        onClose={() => { setIsCreateDialogOpen(false); setInsertIndex(null); }}
+                        onCreate={handleCreateFrame}
+                        scenes={currentProject?.scenes || []}
+                    />
+                )}
+            </AnimatePresence>
+        </div >
+    );
+}
+
+function CreateFrameDialog({ onClose, onCreate, scenes }: { onClose: () => void; onCreate: (data: any) => void; scenes: any[] }) {
+    const [action, setAction] = useState("");
+    const [dialogue, setDialogue] = useState("");
+    const [sceneId, setSceneId] = useState(scenes[0]?.id || "");
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSubmit = async () => {
+        if (!action.trim()) {
+            alert("Action description is required");
+            return;
+        }
+        if (!sceneId && scenes.length > 0) {
+            alert("Please select a scene");
+            return;
+        }
+
+        setIsSubmitting(true);
+        try {
+            await onCreate({
+                action_description: action.trim(),
+                dialogue: dialogue.trim(),
+                scene_id: sceneId,
+                camera_angle: "Medium Shot"
+            });
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-8">
+            <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-[#1a1a1a] border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl"
+            >
+                <div className="p-6 border-b border-white/10 flex justify-between items-center bg-black/20">
+                    <div className="flex items-center gap-3">
+                        <Plus className="text-primary" size={20} />
+                        <h2 className="text-lg font-bold text-white">Add New Frame</h2>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                        <X size={20} className="text-gray-400" />
+                    </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Scene</label>
+                        <select
+                            value={sceneId}
+                            onChange={(e) => setSceneId(e.target.value)}
+                            className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white focus:border-primary/50 focus:outline-none appearance-none"
+                        >
+                            <option value="" disabled>Select a scene</option>
+                            {scenes.map((s: any) => (
+                                <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Action Description *</label>
+                        <textarea
+                            value={action}
+                            onChange={(e) => setAction(e.target.value)}
+                            placeholder="What is happening in this frame?"
+                            rows={3}
+                            className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:border-primary/50 focus:outline-none resize-none"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Dialogue (Optional)</label>
+                        <textarea
+                            value={dialogue}
+                            onChange={(e) => setDialogue(e.target.value)}
+                            placeholder="Character dialogue..."
+                            rows={2}
+                            className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:border-primary/50 focus:outline-none resize-none"
+                        />
+                    </div>
+                </div>
+
+                <div className="p-6 border-t border-white/10 flex justify-end gap-3">
+                    <button
+                        onClick={onClose}
+                        className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        onClick={handleSubmit}
+                        disabled={isSubmitting || !action.trim()}
+                        className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                        {isSubmitting && <RefreshCw size={16} className="animate-spin" />}
+                        Create Frame
+                    </button>
+                </div>
+            </motion.div>
         </div>
     );
 }

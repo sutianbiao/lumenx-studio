@@ -129,7 +129,24 @@ class AssetGenerator:
                     except Exception as e:
                         logger.error(f"Failed to generate full body variant {i+1}/{batch_size}: {e}")
                         # Continue with next variant instead of stopping entirely
+                    except Exception as e:
+                        logger.error(f"Failed to generate full body variant {i+1}/{batch_size}: {e}")
+                        # Continue with next variant instead of stopping entirely
                         continue
+
+                    # Try uploading to OSS if configured - store Object Key (not full URL)
+                    try:
+                        from ...utils.oss_utils import OSSImageUploader
+                        uploader = OSSImageUploader()
+                        if uploader.is_configured:
+                            object_key = uploader.upload_file(fullbody_path, sub_path="assets/characters")
+                            if object_key:
+                                logger.info(f"Uploaded full body variant {i+1} to OSS: {object_key}")
+                                variant.url = object_key
+                                if character.full_body_asset.selected_id == variant.id:
+                                    character.full_body_image_url = object_key
+                    except Exception as e:
+                        logger.error(f"Failed to upload full body variant {i+1} to OSS: {e}")
 
                 logger.info(f"Full body generation complete: {successful_generations}/{batch_size} variants generated")
                 character.full_body_updated_at = time.time()
@@ -205,6 +222,21 @@ class AssetGenerator:
                     except Exception as e:
                         logger.error(f"Failed to generate three view variant {i+1}/{batch_size}: {e}")
                         continue
+                    
+                    # Try uploading to OSS if configured - store Object Key (not full URL)
+                    try:
+                        from ...utils.oss_utils import OSSImageUploader
+                        uploader = OSSImageUploader()
+                        if uploader.is_configured:
+                            object_key = uploader.upload_file(sheet_path, sub_path="assets/characters")
+                            if object_key:
+                                logger.info(f"Uploaded three view variant {i+1} to OSS: {object_key}")
+                                variant.url = object_key
+                                if character.three_view_asset.selected_id == variant.id:
+                                    character.three_view_image_url = object_key
+                                    character.image_url = object_key
+                    except Exception as e:
+                        logger.error(f"Failed to upload three view variant {i+1} to OSS: {e}")
 
                 logger.info(f"Three view generation complete: {successful_generations}/{batch_size} variants generated")
                 character.three_view_updated_at = time.time()
@@ -261,6 +293,21 @@ class AssetGenerator:
                     except Exception as e:
                         logger.error(f"Failed to generate headshot variant {i+1}/{batch_size}: {e}")
                         continue
+
+                    # Try uploading to OSS if configured - store Object Key (not full URL)
+                    try:
+                        from ...utils.oss_utils import OSSImageUploader
+                        uploader = OSSImageUploader()
+                        if uploader.is_configured:
+                            object_key = uploader.upload_file(avatar_path, sub_path="assets/characters")
+                            if object_key:
+                                logger.info(f"Uploaded headshot variant {i+1} to OSS: {object_key}")
+                                variant.url = object_key
+                                if character.headshot_asset.selected_id == variant.id:
+                                    character.headshot_image_url = object_key
+                                    character.avatar_url = object_key
+                    except Exception as e:
+                        logger.error(f"Failed to upload headshot variant {i+1} to OSS: {e}")
 
                 logger.info(f"Headshot generation complete: {successful_generations}/{batch_size} variants generated")
                 character.headshot_updated_at = time.time()
@@ -321,6 +368,20 @@ class AssetGenerator:
                     scene.image_asset.selected_id = variant_id
                     scene.image_url = rel_path # Legacy sync
 
+                # Try uploading to OSS if configured - store Object Key (not full URL)
+                try:
+                    from ...utils.oss_utils import OSSImageUploader
+                    uploader = OSSImageUploader()
+                    if uploader.is_configured:
+                        object_key = uploader.upload_file(output_path, sub_path="assets/scenes")
+                        if object_key:
+                            logger.info(f"Uploaded scene variant to OSS: {object_key}")
+                            variant.url = object_key
+                            if scene.image_asset.selected_id == variant.id:
+                                scene.image_url = object_key
+                except Exception as e:
+                    logger.error(f"Failed to upload scene variant to OSS: {e}")
+
             scene.status = GenerationStatus.COMPLETED
         except Exception as e:
             logger.error(f"Failed to generate scene {scene.name}: {e}")
@@ -368,6 +429,20 @@ class AssetGenerator:
                 if not prop.image_asset.selected_id or batch_size == 1:
                     prop.image_asset.selected_id = variant_id
                     prop.image_url = rel_path # Legacy sync
+
+                # Try uploading to OSS if configured - store Object Key (not full URL)
+                try:
+                    from ...utils.oss_utils import OSSImageUploader
+                    uploader = OSSImageUploader()
+                    if uploader.is_configured:
+                        object_key = uploader.upload_file(output_path, sub_path="assets/props")
+                        if object_key:
+                            logger.info(f"Uploaded prop variant to OSS: {object_key}")
+                            variant.url = object_key
+                            if prop.image_asset.selected_id == variant.id:
+                                prop.image_url = object_key
+                except Exception as e:
+                    logger.error(f"Failed to upload prop variant to OSS: {e}")
 
             prop.status = GenerationStatus.COMPLETED
         except Exception as e:

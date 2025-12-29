@@ -14,6 +14,20 @@ export interface ImageAsset {
     variants: ImageVariant[];
 }
 
+export interface VideoTask {
+    id: string;
+    project_id: string;
+    asset_id?: string;
+    frame_id?: string;
+    image_url: string;
+    prompt: string;
+    status: string;
+    video_url?: string;
+    duration?: number;
+    created_at: number;
+    model?: string;
+}
+
 export interface Character {
     id: string;
     name: string;
@@ -35,6 +49,10 @@ export interface Character {
     three_view_asset?: ImageAsset;
     headshot_asset?: ImageAsset;
 
+    // Video Assets
+    video_assets?: VideoTask[];
+    video_prompt?: string;
+
     voice_id?: string;
     voice_name?: string;
     locked?: boolean;
@@ -51,8 +69,12 @@ export interface Scene {
     description: string;
     image_url?: string;
     image_asset?: ImageAsset;
+    video_assets?: VideoTask[];
+    video_prompt?: string;
     status?: string;
     locked?: boolean;
+    time_of_day?: string;
+    lighting_mood?: string;
 }
 
 export interface Prop {
@@ -61,6 +83,8 @@ export interface Prop {
     description: string;
     image_url?: string;
     image_asset?: ImageAsset;
+    video_assets?: VideoTask[];
+    video_prompt?: string;
     status?: string;
     locked?: boolean;
 }
@@ -193,6 +217,7 @@ export interface Project {
     style_preset?: string;
     art_direction?: ArtDirection;
     model_settings?: ModelSettings;
+    merged_video_url?: string;
 }
 
 interface ProjectStore {

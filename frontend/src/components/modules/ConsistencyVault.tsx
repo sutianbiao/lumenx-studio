@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Paintbrush, User, MapPin, Box, Lock, Unlock, RefreshCw, Upload, Image as ImageIcon, X, Check, Settings, ChevronRight } from "lucide-react";
+import { Paintbrush, User, MapPin, Box, Lock, Unlock, RefreshCw, Upload, Image as ImageIcon, X, Check, Settings, ChevronRight, Trash2, Plus } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
-import { api, API_URL } from "@/lib/api";
+import { api, API_URL, crudApi } from "@/lib/api";
 import CharacterWorkbench from "./CharacterWorkbench";
 import { VariantSelector } from "../common/VariantSelector";
+import { VideoVariantSelector } from "../common/VideoVariantSelector";
 
 export default function ConsistencyVault() {
     const currentProject = useProjectStore((state) => state.currentProject);
@@ -31,6 +32,9 @@ export default function ConsistencyVault() {
     // Store ID and Type instead of full object to ensure reactivity
     const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
     const [selectedAssetType, setSelectedAssetType] = useState<string | null>(null);
+
+    // Create asset dialog state
+    const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
     // Derive selected asset from currentProject
     const selectedAsset = currentProject ? (() => {
@@ -100,6 +104,86 @@ export default function ConsistencyVault() {
         }
     };
 
+    // Delete asset handler
+    const handleDeleteAsset = async (assetId: string, type: string) => {
+        if (!currentProject) return;
+        if (!confirm(`Are you sure you want to delete this ${type}?`)) return;
+
+        try {
+            if (type === "character") {
+                await crudApi.deleteCharacter(currentProject.id, assetId);
+            } else if (type === "scene") {
+                await crudApi.deleteScene(currentProject.id, assetId);
+            } else if (type === "prop") {
+                await crudApi.deleteProp(currentProject.id, assetId);
+            }
+            // Refresh project data
+            const updatedProject = await api.getProject(currentProject.id);
+            updateProject(currentProject.id, updatedProject);
+        } catch (error) {
+            console.error("Failed to delete asset:", error);
+            alert("Failed to delete asset");
+        }
+    };
+
+    // Create asset handler
+    const handleCreateAsset = async (data: { name: string; description: string }) => {
+        if (!currentProject) return;
+
+        try {
+            if (activeTab === "character") {
+                await crudApi.createCharacter(currentProject.id, data);
+            } else if (activeTab === "scene") {
+                await crudApi.createScene(currentProject.id, data);
+            } else if (activeTab === "prop") {
+                await crudApi.createProp(currentProject.id, data);
+            }
+            // Refresh project data
+            const updatedProject = await api.getProject(currentProject.id);
+            updateProject(currentProject.id, updatedProject);
+            setIsCreateDialogOpen(false);
+        } catch (error) {
+            console.error("Failed to create asset:", error);
+            alert("Failed to create asset");
+        }
+    };
+
+    // Video Handlers
+    const handleGenerateVideo = async (assetId: string, type: string, prompt: string, duration: number) => {
+        if (!currentProject) return;
+
+        if (addGeneratingTask) {
+            addGeneratingTask(assetId, "video", 1);
+        }
+
+        try {
+            await api.generateAssetVideo(currentProject.id, type, assetId, { prompt, duration });
+            const updatedProject = await api.getProject(currentProject.id);
+            updateProject(currentProject.id, updatedProject);
+        } catch (error: any) {
+            console.error("Failed to generate video:", error);
+            alert(`Failed to generate video: ${error.message}`);
+        } finally {
+            if (removeGeneratingTask) {
+                removeGeneratingTask(assetId, "video");
+            }
+        }
+    };
+
+    const handleDeleteVideo = async (assetId: string, type: string, videoId: string) => {
+        if (!currentProject) return;
+        if (!confirm("Are you sure you want to delete this video? This action cannot be undone.")) return;
+
+        try {
+            await api.deleteAssetVideo(currentProject.id, type, assetId, videoId);
+            const updatedProject = await api.getProject(currentProject.id);
+            updateProject(currentProject.id, updatedProject);
+        } catch (error: any) {
+            console.error("Failed to delete video:", error);
+            alert(`Failed to delete video: ${error.message}`);
+        }
+    };
+
     const assets = activeTab === "character" ? currentProject?.characters :
         activeTab === "scene" ? currentProject?.scenes :
             activeTab === "prop" ? currentProject?.props : [];
@@ -156,6 +240,19 @@ export default function ConsistencyVault() {
                     </div>
                 ) : (
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                        {/* Create New Asset Button */}
+                        <motion.div
+                            layout
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            onClick={() => setIsCreateDialogOpen(true)}
+                            className="group relative aspect-[3/4] bg-black/20 rounded-2xl border-2 border-dashed border-white/20 hover:border-primary/50 overflow-hidden transition-all cursor-pointer flex items-center justify-center hover:bg-white/5"
+                        >
+                            <div className="flex flex-col items-center gap-3 text-gray-400 group-hover:text-primary transition-colors">
+                                <Plus size={40} />
+                                <span className="text-sm font-medium">Add {activeTab}</span>
+                            </div>
+                        </motion.div>
                         {assets?.map((asset: any) => (
                             <AssetCard
                                 key={asset.id}
@@ -168,6 +265,7 @@ export default function ConsistencyVault() {
                                     setSelectedAssetId(asset.id);
                                     setSelectedAssetType(activeTab);
                                 }}
+                                onDelete={() => handleDeleteAsset(asset.id, activeTab)}
                             />
                         ))}
                     </div>
@@ -189,6 +287,8 @@ export default function ConsistencyVault() {
                             generatingTypes={getAssetGeneratingTypes(selectedAssetId)}
                             stylePrompt={currentProject?.art_direction?.style_config?.positive_prompt || styles.find(s => s.id === selectedStyleId)?.prompt || ""}
                             styleNegativePrompt={currentProject?.art_direction?.style_config?.negative_prompt || styles.find(s => s.id === selectedStyleId)?.negative_prompt || ""}
+                            onGenerateVideo={(prompt: string, duration: number) => handleGenerateVideo(selectedAssetId, selectedAssetType, prompt, duration)}
+                            onDeleteVideo={(videoId: string) => handleDeleteVideo(selectedAssetId, selectedAssetType, videoId)}
                         />
                     ) : (
                         <CharacterDetailModal
@@ -203,6 +303,9 @@ export default function ConsistencyVault() {
                             isGenerating={isAssetGenerating(selectedAssetId)}
                             stylePrompt={currentProject?.art_direction?.style_config?.positive_prompt || styles.find(s => s.id === selectedStyleId)?.prompt || ""}
                             styleNegativePrompt={currentProject?.art_direction?.style_config?.negative_prompt || styles.find(s => s.id === selectedStyleId)?.negative_prompt || ""}
+                            onGenerateVideo={(prompt: string, duration: number) => handleGenerateVideo(selectedAssetId, selectedAssetType, prompt, duration)}
+                            onDeleteVideo={(videoId: string) => handleDeleteVideo(selectedAssetId, selectedAssetType, videoId)}
+                            isGeneratingVideo={getAssetGeneratingTypes(selectedAssetId).some((t: any) => t.type === "video")}
                         />
                     )
                 )}
@@ -224,11 +327,22 @@ export default function ConsistencyVault() {
                     )
                 }
             </AnimatePresence>
+
+            {/* Create Asset Dialog */}
+            <AnimatePresence>
+                {isCreateDialogOpen && (
+                    <CreateAssetDialog
+                        type={activeTab}
+                        onClose={() => setIsCreateDialogOpen(false)}
+                        onCreate={handleCreateAsset}
+                    />
+                )}
+            </AnimatePresence>
         </div >
     );
 }
 
-function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGenerate, isGenerating, stylePrompt = "", styleNegativePrompt = "" }: any) {
+function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGenerate, isGenerating, stylePrompt = "", styleNegativePrompt = "", onGenerateVideo, onDeleteVideo, isGeneratingVideo }: any) {
     const [description, setDescription] = useState(asset.description);
     const [isEditing, setIsEditing] = useState(false);
     const currentProject = useProjectStore((state) => state.currentProject);
@@ -239,10 +353,18 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
     const [negativePrompt, setNegativePrompt] = useState(styleNegativePrompt || "low quality, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry");
     const [showAdvanced, setShowAdvanced] = useState(false);
 
+    // Video Controls
+    const [activeTab, setActiveTab] = useState<"image" | "video">("image");
+    const [videoPrompt, setVideoPrompt] = useState(asset.video_prompt || "");
+
     // Sync local state if asset changes
     useEffect(() => {
         setDescription(asset.description);
-    }, [asset.description]);
+        if (asset.video_prompt) setVideoPrompt(asset.video_prompt);
+        else if (!videoPrompt) {
+            setVideoPrompt(`Cinematic shot of ${asset.name}, ${asset.description}, looking around, breathing, slight movement, high quality, 4k`);
+        }
+    }, [asset]);
 
     // Sync negative prompt if style changes
     useEffect(() => {
@@ -289,17 +411,46 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                 className="bg-[#1a1a1a] border border-white/10 rounded-2xl w-full max-w-5xl h-[85vh] flex overflow-hidden shadow-2xl"
             >
                 {/* Left: Variant Selector */}
-                <div className="w-1/2 bg-black/40 relative border-r border-white/10 p-4 flex flex-col overflow-hidden">
-                    <VariantSelector
-                        asset={asset.image_asset}
-                        currentImageUrl={asset.image_url}
-                        onSelect={handleSelectVariant}
-                        onDelete={handleDeleteVariant}
-                        onGenerate={handleGenerateClick}
-                        isGenerating={isGenerating}
-                        aspectRatio="16:9"
-                        className="h-full"
-                    />
+                <div className="w-1/2 bg-black/40 relative border-r border-white/10 flex flex-col overflow-hidden">
+                    {/* Tab Switcher */}
+                    <div className="flex border-b border-white/10 bg-black/20">
+                        <button
+                            onClick={() => setActiveTab("image")}
+                            className={`flex-1 p-3 text-sm font-bold transition-colors ${activeTab === "image" ? "text-white border-b-2 border-primary bg-white/5" : "text-gray-500 hover:text-gray-300"}`}
+                        >
+                            Image Reference
+                        </button>
+                        <button
+                            onClick={() => setActiveTab("video")}
+                            className={`flex-1 p-3 text-sm font-bold transition-colors ${activeTab === "video" ? "text-white border-b-2 border-primary bg-white/5" : "text-gray-500 hover:text-gray-300"}`}
+                        >
+                            Video Reference
+                        </button>
+                    </div>
+
+                    <div className="flex-1 p-4 overflow-hidden">
+                        {activeTab === "image" ? (
+                            <VariantSelector
+                                asset={asset.image_asset}
+                                currentImageUrl={asset.image_url}
+                                onSelect={handleSelectVariant}
+                                onDelete={handleDeleteVariant}
+                                onGenerate={handleGenerateClick}
+                                isGenerating={isGenerating}
+                                aspectRatio="16:9"
+                                className="h-full"
+                            />
+                        ) : (
+                            <VideoVariantSelector
+                                videos={asset.video_assets || []}
+                                onDelete={onDeleteVideo}
+                                onGenerate={(duration) => onGenerateVideo(videoPrompt, duration)}
+                                isGenerating={isGeneratingVideo}
+                                aspectRatio="16:9"
+                                className="h-full"
+                            />
+                        )}
+                    </div>
                 </div>
 
                 {/* Right: Details */}
@@ -343,59 +494,76 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                             )}
                         </div>
 
-                        {/* Style Control */}
-                        <div className="space-y-2">
-                            <label className="text-sm font-bold text-gray-400 uppercase">Style Settings</label>
-                            <div className="bg-white/5 rounded-lg p-3 border border-white/5">
-                                <div className="flex items-center gap-2 mb-2">
-                                    <input
-                                        type="checkbox"
-                                        id="applyStyleModal"
-                                        checked={applyStyle}
-                                        onChange={(e) => setApplyStyle(e.target.checked)}
-                                        className="rounded border-gray-600 bg-gray-700 text-primary focus:ring-primary"
-                                    />
-                                    <label htmlFor="applyStyleModal" className="text-sm font-bold text-gray-300 cursor-pointer select-none">
-                                        Apply Global Style
-                                    </label>
-                                </div>
-
-                                {stylePrompt && (
-                                    <div className="text-xs text-gray-500 font-mono bg-black/20 p-2 rounded border border-white/5">
-                                        <span className="text-primary font-bold">Style:</span> {stylePrompt}
-                                    </div>
-                                )}
+                        {/* Video Prompt (Only visible in Video Tab) */}
+                        {activeTab === "video" && (
+                            <div className="space-y-2">
+                                <label className="text-sm font-bold text-gray-400 uppercase">Video Prompt</label>
+                                <textarea
+                                    value={videoPrompt}
+                                    onChange={(e) => setVideoPrompt(e.target.value)}
+                                    className="w-full h-24 bg-black/20 border border-white/10 rounded-lg p-3 text-sm text-gray-300 resize-none focus:border-primary focus:outline-none"
+                                    placeholder="Describe the motion..."
+                                />
                             </div>
-                        </div>
+                        )}
 
-                        {/* Advanced Settings (Negative Prompt) */}
-                        <div className="space-y-2">
-                            <button
-                                onClick={() => setShowAdvanced(!showAdvanced)}
-                                className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-white transition-colors uppercase"
-                            >
-                                <span>Advanced Settings (Negative Prompt)</span>
-                                <ChevronRight size={12} className={`transform transition-transform ${showAdvanced ? 'rotate-90' : ''}`} />
-                            </button>
-
-                            <AnimatePresence>
-                                {showAdvanced && (
-                                    <motion.div
-                                        initial={{ height: 0, opacity: 0 }}
-                                        animate={{ height: "auto", opacity: 1 }}
-                                        exit={{ height: 0, opacity: 0 }}
-                                        className="overflow-hidden"
-                                    >
-                                        <textarea
-                                            value={negativePrompt}
-                                            onChange={(e) => setNegativePrompt(e.target.value)}
-                                            className="w-full h-24 bg-black/20 border border-white/10 rounded-lg p-3 text-xs text-gray-400 resize-none focus:outline-none focus:border-primary/50 font-mono"
-                                            placeholder="Enter negative prompt..."
+                        {/* Style Control (Only visible in Image Tab) */}
+                        {activeTab === "image" && (
+                            <div className="space-y-2">
+                                <label className="text-sm font-bold text-gray-400 uppercase">Style Settings</label>
+                                <div className="bg-white/5 rounded-lg p-3 border border-white/5">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <input
+                                            type="checkbox"
+                                            id="applyStyleModal"
+                                            checked={applyStyle}
+                                            onChange={(e) => setApplyStyle(e.target.checked)}
+                                            className="rounded border-gray-600 bg-gray-700 text-primary focus:ring-primary"
                                         />
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-                        </div>
+                                        <label htmlFor="applyStyleModal" className="text-sm font-bold text-gray-300 cursor-pointer select-none">
+                                            Apply Global Style
+                                        </label>
+                                    </div>
+
+                                    {stylePrompt && (
+                                        <div className="text-xs text-gray-500 font-mono bg-black/20 p-2 rounded border border-white/5">
+                                            <span className="text-primary font-bold">Style:</span> {stylePrompt}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Advanced Settings (Negative Prompt) - Only visible in Image Tab */}
+                        {activeTab === "image" && (
+                            <div className="space-y-2">
+                                <button
+                                    onClick={() => setShowAdvanced(!showAdvanced)}
+                                    className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-white transition-colors uppercase"
+                                >
+                                    <span>Advanced Settings (Negative Prompt)</span>
+                                    <ChevronRight size={12} className={`transform transition-transform ${showAdvanced ? 'rotate-90' : ''}`} />
+                                </button>
+
+                                <AnimatePresence>
+                                    {showAdvanced && (
+                                        <motion.div
+                                            initial={{ height: 0, opacity: 0 }}
+                                            animate={{ height: "auto", opacity: 1 }}
+                                            exit={{ height: 0, opacity: 0 }}
+                                            className="overflow-hidden"
+                                        >
+                                            <textarea
+                                                value={negativePrompt}
+                                                onChange={(e) => setNegativePrompt(e.target.value)}
+                                                className="w-full h-24 bg-black/20 border border-white/10 rounded-lg p-3 text-xs text-gray-400 resize-none focus:outline-none focus:border-primary/50 font-mono"
+                                                placeholder="Enter negative prompt..."
+                                            />
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
+                        )}
                     </div>
 
                     {/* Footer Actions */}
@@ -483,7 +651,7 @@ function ImageWithRetry({ src, alt, className }: { src: string, alt: string, cla
     );
 }
 
-function AssetCard({ asset, type, isGenerating, onGenerate, onToggleLock, onClick }: any) {
+function AssetCard({ asset, type, isGenerating, onGenerate, onToggleLock, onClick, onDelete }: any) {
     const isLocked = asset.locked || false;
     const currentProject = useProjectStore((state) => state.currentProject);
     const updateProject = useProjectStore((state) => state.updateProject);
@@ -544,6 +712,16 @@ function AssetCard({ asset, type, isGenerating, onGenerate, onToggleLock, onClic
 
             {/* Top Actions Overlay */}
             <div className="absolute top-2 right-2 z-30 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete();
+                    }}
+                    className="p-2 rounded-full backdrop-blur-md bg-red-500/20 text-red-400 hover:bg-red-500/40 transition-colors"
+                    title="Delete"
+                >
+                    <Trash2 size={14} />
+                </button>
                 <button
                     onClick={(e) => {
                         e.stopPropagation();
@@ -661,6 +839,88 @@ function StyleEditorModal({ styles, selectedStyleId, onClose, onUpdate }: any) {
                         className="px-6 py-2 bg-primary hover:bg-primary/90 text-white text-sm font-bold rounded-lg shadow-lg shadow-primary/20 transition-all"
                     >
                         Save Changes
+                    </button>
+                </div>
+            </motion.div>
+        </div>
+    );
+}
+
+function CreateAssetDialog({ type, onClose, onCreate }: { type: string; onClose: () => void; onCreate: (data: { name: string; description: string }) => void }) {
+    const [name, setName] = useState("");
+    const [description, setDescription] = useState("");
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSubmit = async () => {
+        if (!name.trim()) {
+            alert("Name is required");
+            return;
+        }
+        setIsSubmitting(true);
+        try {
+            await onCreate({ name: name.trim(), description: description.trim() });
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const typeLabel = type === "character" ? "Character" : type === "scene" ? "Scene" : "Prop";
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-8">
+            <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-[#1a1a1a] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl"
+            >
+                <div className="p-6 border-b border-white/10 flex justify-between items-center bg-black/20">
+                    <div className="flex items-center gap-3">
+                        <Plus className="text-primary" size={20} />
+                        <h2 className="text-lg font-bold text-white">Create New {typeLabel}</h2>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                        <X size={20} className="text-gray-400" />
+                    </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Name *</label>
+                        <input
+                            type="text"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder={`Enter ${type} name`}
+                            className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:border-primary/50 focus:outline-none"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Description</label>
+                        <textarea
+                            value={description}
+                            onChange={(e) => setDescription(e.target.value)}
+                            placeholder={`Describe the ${type}...`}
+                            rows={4}
+                            className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:border-primary/50 focus:outline-none resize-none"
+                        />
+                    </div>
+                </div>
+
+                <div className="p-6 border-t border-white/10 flex justify-end gap-3">
+                    <button
+                        onClick={onClose}
+                        className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        onClick={handleSubmit}
+                        disabled={isSubmitting || !name.trim()}
+                        className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                        {isSubmitting && <RefreshCw size={16} className="animate-spin" />}
+                        Create {typeLabel}
                     </button>
                 </div>
             </motion.div>

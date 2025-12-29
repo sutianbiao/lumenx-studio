@@ -72,6 +72,20 @@ class VideoGenerator:
             rel_path = os.path.relpath(output_path, "output")
             frame.video_url = rel_path
             frame.status = GenerationStatus.COMPLETED
+            
+            # Try uploading to OSS if configured - store Object Key (not full URL)
+            try:
+                from ...utils.oss_utils import OSSImageUploader
+                uploader = OSSImageUploader()
+                if uploader.is_configured:
+                    object_key = uploader.upload_file(output_path, sub_path="video")
+                    if object_key:
+                        logger.info(f"Uploaded video for frame {frame.id} to OSS: {object_key}")
+                        # Store Object Key (will be converted to signed URL on API response)
+                        frame.video_url = object_key
+            except Exception as e:
+                logger.error(f"Failed to upload video for frame {frame.id} to OSS: {e}")
+                # Continue even if OSS upload fails
         except Exception as e:
             logger.error(f"Failed to generate video for frame {frame.id}: {e}")
             frame.status = GenerationStatus.FAILED

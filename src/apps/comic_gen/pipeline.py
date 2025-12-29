@@ -610,27 +610,48 @@ class ComicGenPipeline:
 
     def merge_videos(self, script_id: str) -> Script:
         """Step 5b: Merge selected videos into a single file."""
+        import shutil
+        
         script = self.scripts.get(script_id)
         if not script:
             raise ValueError("Script not found")
+        
+        logger.info(f"[MERGE] Starting video merge for script {script_id}")
+        
+        # Check if ffmpeg is available
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            logger.error("[MERGE] FFmpeg not found in PATH!")
+            raise RuntimeError("FFmpeg not found. Please install FFmpeg: https://ffmpeg.org/download.html")
+        logger.info(f"[MERGE] FFmpeg found at: {ffmpeg_path}")
             
         # Collect video paths
         video_paths = []
-        for frame in script.frames:
+        for i, frame in enumerate(script.frames):
+            logger.info(f"[MERGE] Processing frame {i+1}/{len(script.frames)}: {frame.id}")
+            
             if not frame.selected_video_id:
-                # Skip or fail? For now skip, but maybe warn?
-                # Or try to find a default completed video?
+                # Try to find a default completed video
                 default_video = next((v for v in script.video_tasks if v.frame_id == frame.id and v.status == "completed"), None)
                 if default_video and default_video.video_url:
+                    logger.info(f"[MERGE]   -> Using default video: {default_video.video_url}")
                     video_paths.append(default_video.video_url)
+                else:
+                    logger.warning(f"[MERGE]   -> No video selected or available, skipping")
                 continue
                 
             video = next((v for v in script.video_tasks if v.id == frame.selected_video_id), None)
             if video and video.video_url:
+                logger.info(f"[MERGE]   -> Selected video: {video.video_url}")
                 video_paths.append(video.video_url)
+            else:
+                logger.warning(f"[MERGE]   -> Selected video {frame.selected_video_id} not found or has no URL")
                 
         if not video_paths:
-            raise ValueError("No videos selected to merge")
+            logger.error("[MERGE] No videos found to merge!")
+            raise ValueError("No videos selected to merge. Please select videos for each frame first.")
+        
+        logger.info(f"[MERGE] Found {len(video_paths)} videos to merge")
             
         # Create file list for ffmpeg
         list_path = os.path.join("output", f"merge_list_{script_id}.txt")
@@ -644,28 +665,46 @@ class ComicGenPipeline:
                     if os.path.exists(abs_path):
                         f.write(f"file '{abs_path}'\n")
                         abs_video_paths.append(abs_path)
+                        logger.info(f"[MERGE] Added to list: {abs_path}")
+                    else:
+                        logger.warning(f"[MERGE] Video file not found: {abs_path}")
                         
         if not abs_video_paths:
-             raise ValueError("No valid video files found")
+            logger.error("[MERGE] No valid video files found on disk!")
+            raise ValueError("No valid video files found. The video files may have been deleted or moved.")
+        
+        logger.info(f"[MERGE] Merge list created with {len(abs_video_paths)} videos")
 
         # Output path
         output_filename = f"merged_{script_id}_{int(time.time())}.mp4"
         output_path = os.path.join("output", "video", output_filename)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
+        logger.info(f"[MERGE] Output path: {output_path}")
+        
         # Run ffmpeg
-        # ffmpeg -f concat -safe 0 -i list.txt -c copy output.mp4
+        # Use re-encoding for better compatibility (slower but more reliable)
+        # -c:v libx264 -c:a aac ensures consistent output format
         cmd = [
             "ffmpeg", "-y",
             "-f", "concat",
             "-safe", "0",
             "-i", list_path,
-            "-c", "copy",
+            "-c:v", "libx264",  # Re-encode video with H.264
+            "-crf", "23",       # Quality (lower = better, 23 is default)
+            "-preset", "fast",  # Encoding speed
+            "-c:a", "aac",      # Re-encode audio with AAC
+            "-b:a", "128k",     # Audio bitrate
+            "-movflags", "+faststart",  # Web optimization
             output_path
         ]
         
+        logger.info(f"[MERGE] Running FFmpeg command: {' '.join(cmd)}")
+        
         try:
-            subprocess.run(cmd, check=True, capture_output=True)
+            result = subprocess.run(cmd, check=True, capture_output=True, timeout=600)  # 10 min timeout for re-encoding
+            logger.info(f"[MERGE] FFmpeg stdout: {result.stdout.decode()[:500] if result.stdout else 'empty'}")
+            logger.info(f"[MERGE] FFmpeg completed successfully")
             
             # Update script
             script.merged_video_url = f"video/{output_filename}"
@@ -676,9 +715,76 @@ class ComicGenPipeline:
                 os.remove(list_path)
                 
             return script
+        except subprocess.TimeoutExpired:
+            logger.error("[MERGE] FFmpeg timed out after 600 seconds")
+            raise RuntimeError("FFmpeg timed out. The videos may be too large.")
         except subprocess.CalledProcessError as e:
-            logger.error(f"FFmpeg merge failed: {e.stderr.decode()}")
-            raise RuntimeError(f"Merge failed: {e.stderr.decode()}")
+            stderr_msg = e.stderr.decode() if e.stderr else "No error output"
+            stdout_msg = e.stdout.decode() if e.stdout else "No output"
+            logger.error(f"[MERGE] FFmpeg failed with exit code {e.returncode}")
+            logger.error(f"[MERGE] FFmpeg stderr: {stderr_msg}")
+            logger.error(f"[MERGE] FFmpeg stdout: {stdout_msg}")
+            raise RuntimeError(f"FFmpeg merge failed: {stderr_msg}")
+
+    def create_asset_video_task(self, script_id: str, asset_id: str, asset_type: str, prompt: str, duration: int = 5, aspect_ratio: str = None) -> Tuple[Script, str]:
+        """Creates a new video generation task for an asset (R2V)."""
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+            
+        # Find asset
+        target_asset = None
+        if asset_type == "character":
+            target_asset = next((c for c in script.characters if c.id == asset_id), None)
+        elif asset_type == "scene":
+            target_asset = next((s for s in script.scenes if s.id == asset_id), None)
+        elif asset_type == "prop":
+            target_asset = next((p for p in script.props if p.id == asset_id), None)
+            
+        if not target_asset:
+            raise ValueError(f"Asset {asset_id} of type {asset_type} not found")
+            
+        # Use main image as reference
+        image_url = target_asset.image_url
+        if not image_url:
+             # Try fallback for character
+             if asset_type == "character":
+                 image_url = target_asset.full_body_image_url or target_asset.avatar_url
+        
+        if not image_url:
+            raise ValueError("Asset has no reference image")
+
+        # Save prompt to asset
+        if prompt:
+            target_asset.video_prompt = prompt
+            
+        task_id = str(uuid.uuid4())
+        
+        # Create VideoTask
+        task = VideoTask(
+            id=task_id,
+            project_id=script_id,
+            asset_id=asset_id, # Link to asset
+            image_url=image_url,
+            prompt=prompt or f"Cinematic shot of {target_asset.name}",
+            status="pending",
+            duration=duration,
+            model="wan2.6-r2v", # Force R2V model
+            created_at=time.time()
+        )
+        
+        # Add to script.video_tasks for global tracking
+        if not script.video_tasks:
+            script.video_tasks = []
+        script.video_tasks.append(task)
+        
+        # Add to asset's video_assets list
+        if not target_asset.video_assets:
+            target_asset.video_assets = []
+        target_asset.video_assets.append(task)
+        
+        self._save_data()
+        return script, task_id
 
     def process_video_task(self, script_id: str, task_id: str):
         """Processes a video task."""
@@ -753,11 +859,177 @@ class ComicGenPipeline:
             task.video_url = os.path.relpath(output_path, "output")
             task.status = "completed"
             
+            # Sync with asset if this is an asset video
+            if task.asset_id:
+                self._sync_asset_video_task(script, task)
+            
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"Video generation failed: {e}")
             task.status = "failed"
+            if task.asset_id:
+                self._sync_asset_video_task(script, task)
             
         self._save_data()
+
+    def _sync_asset_video_task(self, script: Script, task: VideoTask):
+        """Syncs the updated task status/url back to the asset's video_assets list."""
+        target_asset = None
+        # Search in all asset types
+        for char in script.characters:
+            if char.id == task.asset_id:
+                target_asset = char
+                break
+        if not target_asset:
+            for scene in script.scenes:
+                if scene.id == task.asset_id:
+                    target_asset = scene
+                    break
+        if not target_asset:
+            for prop in script.props:
+                if prop.id == task.asset_id:
+                    target_asset = prop
+                    break
+        
+        if target_asset:
+            # Find and update the task in the asset's list
+            for i, t in enumerate(target_asset.video_assets):
+                if t.id == task.id:
+                    target_asset.video_assets[i] = task
+                    break
+            else:
+                # Not found, append it (shouldn't happen if created correctly, but good fallback)
+                target_asset.video_assets.append(task)
+
+    def create_asset_video_task(self, script_id: str, asset_id: str, asset_type: str, prompt: str = None, duration: int = 5, aspect_ratio: str = None) -> Tuple[Script, str]:
+        """Creates a video generation task for an asset (I2V)."""
+        script = self.get_script(script_id)
+        if not script:
+            raise ValueError("Script not found")
+            
+        target_asset = None
+        if asset_type == "character":
+            target_asset = next((c for c in script.characters if c.id == asset_id), None)
+            # Use full body image for character video
+            image_url = target_asset.full_body_image_url or target_asset.image_url
+            if not prompt:
+                prompt = f"A cinematic shot of {target_asset.name}, {target_asset.description}, looking around, breathing, slight movement, high quality, 4k"
+        elif asset_type == "scene":
+            target_asset = next((s for s in script.scenes if s.id == asset_id), None)
+            image_url = target_asset.image_url
+            if not prompt:
+                prompt = f"A cinematic shot of {target_asset.name}, {target_asset.description}, ambient motion, lighting change, high quality, 4k"
+        elif asset_type == "prop":
+            target_asset = next((p for p in script.props if p.id == asset_id), None)
+            image_url = target_asset.image_url
+            if not prompt:
+                prompt = f"A cinematic shot of {target_asset.name}, {target_asset.description}, rotating slowly, high quality, 4k"
+        else:
+            raise ValueError(f"Invalid asset_type: {asset_type}")
+            
+        if not target_asset:
+            raise ValueError(f"Asset {asset_id} not found")
+            
+        if not image_url:
+            raise ValueError(f"Asset {asset_id} has no image to generate video from")
+
+        # Create task using existing method logic but with asset_id
+        task_id = str(uuid.uuid4())
+        
+        # Snapshot logic (duplicated from create_video_task for now, or could refactor)
+        snapshot_url = image_url
+        try:
+            if not image_url.startswith("http"):
+                src_path = os.path.join("output", image_url)
+                if os.path.exists(src_path):
+                    snapshot_dir = os.path.join("output", "video_inputs")
+                    os.makedirs(snapshot_dir, exist_ok=True)
+                    ext = os.path.splitext(image_url)[1] or ".png"
+                    snapshot_filename = f"{task_id}{ext}"
+                    snapshot_path = os.path.join(snapshot_dir, snapshot_filename)
+                    import shutil
+                    shutil.copy2(src_path, snapshot_path)
+                    snapshot_url = f"video_inputs/{snapshot_filename}"
+        except Exception:
+            pass
+
+        # Determine resolution from aspect ratio or default
+        resolution = "720p" # Default
+        # TODO: Map aspect_ratio to resolution if needed
+        
+        task = VideoTask(
+            id=task_id,
+            project_id=script_id,
+            asset_id=asset_id,
+            image_url=snapshot_url,
+            prompt=prompt,
+            status="pending",
+            duration=duration,
+            resolution=resolution,
+            model="wan2.6-i2v", # Asset video uses I2V
+            created_at=time.time()
+        )
+        
+        # Add to global list
+        if not script.video_tasks:
+            script.video_tasks = []
+        script.video_tasks.append(task)
+        
+        # Add to asset list
+        target_asset.video_assets.append(task)
+        
+        self._save_data()
+        return script, task_id
+
+    def delete_asset_video(self, script_id: str, asset_id: str, asset_type: str, video_id: str) -> Script:
+        """Deletes a video from an asset."""
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+        
+        # Find asset
+        target_asset = None
+        if asset_type == "character":
+            target_asset = next((c for c in script.characters if c.id == asset_id), None)
+        elif asset_type == "scene":
+            target_asset = next((s for s in script.scenes if s.id == asset_id), None)
+        elif asset_type == "prop":
+            target_asset = next((p for p in script.props if p.id == asset_id), None)
+        
+        if not target_asset:
+            raise ValueError(f"Asset {asset_id} of type {asset_type} not found")
+        
+        # Find the task first to get video_url for file deletion
+        video_task_to_delete = None
+        if script.video_tasks:
+            video_task_to_delete = next((v for v in script.video_tasks if v.id == video_id), None)
+        
+        # Remove from asset's video_assets
+        if target_asset.video_assets:
+            original_len = len(target_asset.video_assets)
+            target_asset.video_assets = [v for v in target_asset.video_assets if v.id != video_id]
+            if len(target_asset.video_assets) == original_len and not video_task_to_delete:
+                 # Only raise if not found in either place, or just log warning?
+                 # If found in global list but not asset list, it's weird but we should proceed.
+                 pass
+
+        # Also remove from script.video_tasks
+        if script.video_tasks:
+            script.video_tasks = [v for v in script.video_tasks if v.id != video_id]
+        
+        # Try to delete the video file
+        try:
+            if video_task_to_delete and video_task_to_delete.video_url:
+                video_path = os.path.join("output", video_task_to_delete.video_url)
+                if os.path.exists(video_path):
+                    os.remove(video_path)
+                    logger.info(f"Deleted video file: {video_path}")
+        except Exception as e:
+            logger.warning(f"Failed to delete video file: {e}")
+        
+        self._save_data()
+        return script
 
     def generate_audio(self, script_id: str) -> Script:
         """Step 5: Generate audio (Dialogue & SFX)."""
