@@ -255,6 +255,58 @@ async def delete_project(script_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class AddCharacterRequest(BaseModel):
+    name: str
+    description: str
+
+@app.post("/projects/{script_id}/characters", response_model=Script)
+async def add_character(script_id: str, request: AddCharacterRequest):
+    """Adds a new character."""
+    try:
+        updated_script = pipeline.add_character(script_id, request.name, request.description)
+        return updated_script
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/projects/{script_id}/characters/{char_id}", response_model=Script)
+async def delete_character(script_id: str, char_id: str):
+    """Deletes a character."""
+    try:
+        updated_script = pipeline.delete_character(script_id, char_id)
+        return updated_script
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class AddSceneRequest(BaseModel):
+    name: str
+    description: str
+
+@app.post("/projects/{script_id}/scenes", response_model=Script)
+async def add_scene(script_id: str, request: AddSceneRequest):
+    """Adds a new scene."""
+    try:
+        updated_script = pipeline.add_scene(script_id, request.name, request.description)
+        return updated_script
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/projects/{script_id}/scenes/{scene_id}", response_model=Script)
+async def delete_scene(script_id: str, scene_id: str):
+    """Deletes a scene."""
+    try:
+        updated_script = pipeline.delete_scene(script_id, scene_id)
+        return updated_script
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 class UpdateStyleRequest(BaseModel):
     style_preset: str
     style_prompt: Optional[str] = None
@@ -765,6 +817,69 @@ async def update_frame(script_id: str, request: UpdateFrameRequest):
             scene_id=request.scene_id,
             character_ids=request.character_ids
         )
+        return updated_script
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class AddFrameRequest(BaseModel):
+    scene_id: Optional[str] = None
+    action_description: str = ""
+    camera_angle: str = "medium_shot"
+    insert_at: Optional[int] = None
+
+@app.post("/projects/{script_id}/frames", response_model=Script)
+async def add_frame(script_id: str, request: AddFrameRequest):
+    """Adds a new storyboard frame."""
+    try:
+        updated_script = pipeline.add_frame(
+            script_id, 
+            request.scene_id, 
+            request.action_description, 
+            request.camera_angle,
+            request.insert_at
+        )
+        return updated_script
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/projects/{script_id}/frames/{frame_id}", response_model=Script)
+async def delete_frame(script_id: str, frame_id: str):
+    """Deletes a storyboard frame."""
+    try:
+        updated_script = pipeline.delete_frame(script_id, frame_id)
+        return updated_script
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class CopyFrameRequest(BaseModel):
+    frame_id: str
+    insert_at: Optional[int] = None
+
+@app.post("/projects/{script_id}/frames/copy", response_model=Script)
+async def copy_frame(script_id: str, request: CopyFrameRequest):
+    """Copies a storyboard frame."""
+    try:
+        updated_script = pipeline.copy_frame(script_id, request.frame_id, request.insert_at)
+        return updated_script
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ReorderFramesRequest(BaseModel):
+    frame_ids: List[str]
+
+@app.put("/projects/{script_id}/frames/reorder", response_model=Script)
+async def reorder_frames(script_id: str, request: ReorderFramesRequest):
+    """Reorders storyboard frames."""
+    try:
+        updated_script = pipeline.reorder_frames(script_id, request.frame_ids)
         return updated_script
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

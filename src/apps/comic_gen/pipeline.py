@@ -6,7 +6,7 @@ import uuid
 import subprocess
 import threading
 from urllib.parse import quote
-from .models import Script, GenerationStatus, VideoTask
+from .models import Script, GenerationStatus, VideoTask, Character, Scene, StoryboardFrame
 from .llm import ScriptProcessor
 from .assets import AssetGenerator
 from .storyboard import StoryboardGenerator
@@ -226,6 +226,52 @@ class ComicGenPipeline:
             self._save_data()
         
         return script
+
+    def add_character(self, script_id: str, name: str, description: str) -> Script:
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+        
+        new_char = Character(
+            id=f"char_{uuid.uuid4().hex[:8]}",
+            name=name,
+            description=description
+        )
+        script.characters.append(new_char)
+        self._save_data()
+        return script
+
+    def delete_character(self, script_id: str, char_id: str) -> Script:
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+        
+        script.characters = [c for c in script.characters if c.id != char_id]
+        self._save_data()
+        return script
+
+    def add_scene(self, script_id: str, name: str, description: str) -> Script:
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+        
+        new_scene = Scene(
+            id=f"scene_{uuid.uuid4().hex[:8]}",
+            name=name,
+            description=description
+        )
+        script.scenes.append(new_scene)
+        self._save_data()
+        return script
+
+    def delete_scene(self, script_id: str, scene_id: str) -> Script:
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+        
+        script.scenes = [s for s in script.scenes if s.id != scene_id]
+        self._save_data()
+        return script
     
     def toggle_asset_lock(self, script_id: str, asset_id: str, asset_type: str) -> Script:
         """Toggle the locked status of an asset."""
@@ -390,6 +436,84 @@ class ComicGenPipeline:
         if kwargs.get('character_ids') is not None:
             frame.character_ids = kwargs['character_ids']
         
+        self._save_data()
+        return script
+
+    def add_frame(self, script_id: str, scene_id: str = None, action_description: str = "", camera_angle: str = "medium_shot", insert_at: int = None) -> Script:
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+        
+        new_frame = StoryboardFrame(
+            id=f"frame_{uuid.uuid4().hex[:8]}",
+            scene_id=scene_id or (script.scenes[0].id if script.scenes else ""),
+            character_ids=[],
+            action_description=action_description,
+            camera_angle=camera_angle
+        )
+        
+        if insert_at is not None and 0 <= insert_at <= len(script.frames):
+            script.frames.insert(insert_at, new_frame)
+        else:
+            script.frames.append(new_frame)
+            
+        self._save_data()
+        return script
+
+    def copy_frame(self, script_id: str, frame_id: str, insert_at: int = None) -> Script:
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+            
+        original_frame = next((f for f in script.frames if f.id == frame_id), None)
+        if not original_frame:
+            raise ValueError(f"Frame {frame_id} not found")
+            
+        # Create a deep copy with new ID
+        new_frame = original_frame.copy()
+        new_frame.id = f"frame_{uuid.uuid4().hex[:8]}"
+        new_frame.updated_at = time.time()
+        # Reset generation status and URLs for the copy? 
+        # Usually copy implies copying content, but maybe we want to keep the image?
+        # Let's keep the image/content but reset status if it was processing?
+        # Actually, if we copy, we probably want the same image reference initially.
+        # But we should reset the "locked" status maybe?
+        new_frame.locked = False
+        
+        if insert_at is not None and 0 <= insert_at <= len(script.frames):
+            script.frames.insert(insert_at, new_frame)
+        else:
+            # Insert after the original frame by default
+            try:
+                original_index = script.frames.index(original_frame)
+                script.frames.insert(original_index + 1, new_frame)
+            except ValueError:
+                script.frames.append(new_frame)
+                
+        self._save_data()
+        return script
+
+    def delete_frame(self, script_id: str, frame_id: str) -> Script:
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+        
+        script.frames = [f for f in script.frames if f.id != frame_id]
+        self._save_data()
+        return script
+
+    def reorder_frames(self, script_id: str, frame_ids: List[str]) -> Script:
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+        
+        frame_map = {f.id: f for f in script.frames}
+        new_frames = []
+        for fid in frame_ids:
+            if fid in frame_map:
+                new_frames.append(frame_map[fid])
+        
+        script.frames = new_frames
         self._save_data()
         return script
 

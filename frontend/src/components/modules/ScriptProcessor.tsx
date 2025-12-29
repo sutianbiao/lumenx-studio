@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Wand2, User, MapPin, Box, ChevronRight, ChevronLeft, Save, Sparkles } from "lucide-react";
-import { api } from "@/lib/api";
+import { Wand2, User, MapPin, Box, ChevronRight, ChevronLeft, Save, Sparkles, Plus, Trash2, X } from "lucide-react";
+import { api, crudApi } from "@/lib/api";
 import { useProjectStore } from "@/store/projectStore";
 
 interface ScriptNode {
@@ -31,6 +31,7 @@ export default function ScriptProcessor() {
     // UI State
     const [selectedNode, setSelectedNode] = useState<ScriptNode | null>(null);
     const [showPanel, setShowPanel] = useState(true);
+    const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
     // Sync from project
     useEffect(() => {
@@ -74,20 +75,52 @@ export default function ScriptProcessor() {
         }
     };
 
-    // Simple highlighting logic (MVP)
-    // In a real app, we'd use a rich text editor. Here we just highlight names in the text overlay?
-    // Actually, let's just highlight the entities in the right panel for now, 
-    // and maybe add a "Find in Text" feature later.
+    const handleDeleteNode = async (node: ScriptNode, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!currentProject) return;
+        if (!confirm(`Are you sure you want to delete ${node.name}?`)) return;
+
+        try {
+            if (node.type === "character" && node.id) {
+                await crudApi.deleteCharacter(currentProject.id, node.id);
+            } else if (node.type === "scene" && node.id) {
+                await crudApi.deleteScene(currentProject.id, node.id);
+            } else if (node.type === "prop" && node.id) {
+                await crudApi.deleteProp(currentProject.id, node.id);
+            }
+
+            const updatedProject = await api.getProject(currentProject.id);
+            updateProject(currentProject.id, updatedProject);
+        } catch (error) {
+            console.error("Failed to delete node:", error);
+            alert("Failed to delete node");
+        }
+    };
+
+    const handleCreateNode = async (data: any) => {
+        if (!currentProject) return;
+        try {
+            if (data.type === "character") {
+                await crudApi.createCharacter(currentProject.id, data);
+            } else if (data.type === "scene") {
+                await crudApi.createScene(currentProject.id, data);
+            } else if (data.type === "prop") {
+                await crudApi.createProp(currentProject.id, data);
+            }
+
+            const updatedProject = await api.getProject(currentProject.id);
+            updateProject(currentProject.id, updatedProject);
+            setIsCreateDialogOpen(false);
+        } catch (error) {
+            console.error("Failed to create node:", error);
+            alert("Failed to create node");
+        }
+    };
 
     const handleNodeUpdate = (updatedNode: ScriptNode) => {
         // Update local state
         setNodes(prev => prev.map(n => n.name === updatedNode.name ? updatedNode : n));
         setSelectedNode(updatedNode);
-
-        // TODO: Sync back to backend/store if needed immediately, 
-        // but typically we wait for a "Save" or auto-save.
-        // For now, let's just update the store structure locally? 
-        // It's a bit complex to map back to specific arrays without IDs, but we have IDs now.
     };
 
     return (
@@ -143,9 +176,18 @@ export default function ScriptProcessor() {
                         exit={{ width: 0, opacity: 0 }}
                         className="border-l border-white/10 bg-black/40 backdrop-blur-md flex flex-col h-full"
                     >
-                        <div className="p-4 border-b border-white/10">
-                            <h3 className="font-bold text-white">实体识别面板</h3>
-                            <p className="text-xs text-gray-500">已识别 {nodes.length} 个关键要素</p>
+                        <div className="p-4 border-b border-white/10 flex justify-between items-center">
+                            <div>
+                                <h3 className="font-bold text-white">实体识别面板</h3>
+                                <p className="text-xs text-gray-500">已识别 {nodes.length} 个关键要素</p>
+                            </div>
+                            <button
+                                onClick={() => setIsCreateDialogOpen(true)}
+                                className="p-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-gray-300 hover:text-white transition-colors"
+                                title="Add Entity"
+                            >
+                                <Plus size={16} />
+                            </button>
                         </div>
 
                         <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
@@ -162,7 +204,7 @@ export default function ScriptProcessor() {
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: i * 0.05 }}
                                     onClick={() => setSelectedNode(node)}
-                                    className={`p-3 rounded-lg border cursor-pointer transition-all hover:bg-white/5 ${selectedNode?.name === node.name
+                                    className={`group p-3 rounded-lg border cursor-pointer transition-all hover:bg-white/5 ${selectedNode?.name === node.name
                                         ? "border-primary bg-primary/5"
                                         : "border-white/10 bg-white/5"
                                         }`}
@@ -174,13 +216,22 @@ export default function ScriptProcessor() {
                                             {node.type === "prop" && <Box size={14} className="text-yellow-400" />}
                                             <span className="font-bold text-sm text-gray-200">{node.name}</span>
                                         </div>
-                                        {node.visual_weight && (
-                                            <div className="flex gap-0.5">
-                                                {[...Array(5)].map((_, w) => (
-                                                    <div key={w} className={`w-1 h-3 rounded-full ${w < (node.visual_weight || 0) ? "bg-primary" : "bg-white/10"}`} />
-                                                ))}
-                                            </div>
-                                        )}
+                                        <div className="flex items-center gap-2">
+                                            {node.visual_weight && (
+                                                <div className="flex gap-0.5">
+                                                    {[...Array(5)].map((_, w) => (
+                                                        <div key={w} className={`w-1 h-3 rounded-full ${w < (node.visual_weight || 0) ? "bg-primary" : "bg-white/10"}`} />
+                                                    ))}
+                                                </div>
+                                            )}
+                                            <button
+                                                onClick={(e) => handleDeleteNode(node, e)}
+                                                className="p-1 hover:bg-red-500/20 text-gray-500 hover:text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                                title="Delete"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </div>
                                     </div>
                                     <p className="text-xs text-gray-400 line-clamp-2">{node.desc}</p>
                                 </motion.div>
@@ -331,6 +382,71 @@ export default function ScriptProcessor() {
                     </div>
                 )}
             </AnimatePresence>
+            {/* Create Entity Dialog */}
+            <AnimatePresence>
+                {isCreateDialogOpen && (
+                    <CreateEntityDialog
+                        onClose={() => setIsCreateDialogOpen(false)}
+                        onCreate={handleCreateNode}
+                    />
+                )}
+            </AnimatePresence>
+        </div>
+    );
+}
+
+function CreateEntityDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (data: any) => void }) {
+    const [name, setName] = useState("");
+    const [desc, setDesc] = useState("");
+    const [type, setType] = useState<"character" | "scene" | "prop">("character");
+
+    const handleSubmit = () => {
+        if (!name.trim()) return alert("Name is required");
+        onCreate({ name, description: desc, type });
+    };
+
+    return (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+            <div className="w-[400px] bg-[#1a1a1a] border border-white/10 rounded-xl p-6 space-y-4" onClick={e => e.stopPropagation()}>
+                <h3 className="font-bold text-white">Add New Entity</h3>
+
+                <div className="flex gap-2 p-1 bg-black/20 rounded-lg">
+                    {(["character", "scene", "prop"] as const).map(t => (
+                        <button
+                            key={t}
+                            onClick={() => setType(t)}
+                            className={`flex-1 py-1.5 text-xs font-bold rounded capitalize ${type === t ? "bg-primary text-white" : "text-gray-500 hover:text-white"}`}
+                        >
+                            {t}
+                        </button>
+                    ))}
+                </div>
+
+                <div>
+                    <label className="text-xs text-gray-500">Name</label>
+                    <input
+                        className="glass-input w-full"
+                        value={name}
+                        onChange={e => setName(e.target.value)}
+                        placeholder="Entity Name"
+                    />
+                </div>
+
+                <div>
+                    <label className="text-xs text-gray-500">Description</label>
+                    <textarea
+                        className="glass-input w-full h-24 resize-none"
+                        value={desc}
+                        onChange={e => setDesc(e.target.value)}
+                        placeholder="Visual description..."
+                    />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                    <button onClick={onClose} className="px-4 py-2 text-xs text-gray-400 hover:text-white">Cancel</button>
+                    <button onClick={handleSubmit} className="px-4 py-2 bg-primary text-white rounded text-xs font-bold">Create</button>
+                </div>
+            </div>
         </div>
     );
 }
