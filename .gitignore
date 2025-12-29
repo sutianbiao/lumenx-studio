@@ -66,3 +66,5 @@ dist_windows/
 Thumbs.db
 
 static/output/
+output/
+static/
