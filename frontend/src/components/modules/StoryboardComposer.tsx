@@ -159,9 +159,17 @@ export default function StoryboardComposer() {
 
             // Helper to get selected variant URL from an asset
             const getSelectedVariantUrl = (asset: any): string | null => {
-                if (!asset || !asset.selected_id || !asset.variants) return null;
-                const variant = asset.variants.find((v: any) => v.id === asset.selected_id);
-                return variant?.url || null;
+                if (!asset || !asset.variants || asset.variants.length === 0) return null;
+
+                // Try to get selected variant first
+                if (asset.selected_id) {
+                    const selectedVariant = asset.variants.find((v: any) => v.id === asset.selected_id);
+                    if (selectedVariant?.url) return selectedVariant.url;
+                }
+
+                // Fallback: auto-select first variant if no selection exists
+                // This handles the case where selected_id is null/undefined
+                return asset.variants[0]?.url || null;
             };
 
             // 1. Add Scene Image - prioritize selected variant
